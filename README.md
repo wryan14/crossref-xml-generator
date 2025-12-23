@@ -4,6 +4,27 @@ Download, edit, and convert metadata for DOI registration.
 
 A web-based tool for metadata librarians to manage Crossref submissions without navigating complex XML schemas or APIs. Pull existing DOI metadata, modify it in a spreadsheet, and generate valid Crossref 5.3.1 XML for submission.
 
+![Web Interface](docs/images/web-interface.png)
+
+## Use Cases
+
+**Who uses this:**
+- Metadata librarians managing institutional repositories
+- Journal managers updating DOI records
+- Repository administrators maintaining publisher metadata
+
+**Common workflows:**
+- **Bulk ORCID enrichment** — Download 500 article records, add author ORCIDs in Excel, resubmit to Crossref
+- **ROR affiliation updates** — Pull existing metadata, append ROR identifiers to institutional affiliations, generate updated XML
+- **Metadata corrections** — Fix author names, affiliations, or publication dates across multiple DOIs without manual XML editing
+- **New DOI registration** — Create CSV from local records, add required Crossref fields, generate submission XML
+
+**Why CSV as intermediate format:**
+- Editable in Excel, Google Sheets, or any spreadsheet tool
+- Supports bulk find-and-replace operations across hundreds of records
+- No XML syntax knowledge required for metadata staff
+- Version control friendly for tracking changes
+
 ## Requirements
 
 - Python 3.8+

@@ -61,8 +61,7 @@ def download_prefix(prefix: str, email: str | None = None, limit: int | None = N
     headers = {'User-Agent': f'CrossrefXMLGenerator/1.0 (mailto:{email})' if email else 'CrossrefXMLGenerator/1.0'}
     all_items = []
 
-    # Use different endpoints based on whether we need sorting
-    # /prefixes endpoint doesn't support sorting, so use /works with filter when limit specified
+    # /prefixes endpoint doesn't support sorting; /works with filter enables sort_by parameter
     if limit is not None:
         # Use /works endpoint with filter for sorting support
         works_url = f'{CROSSREF_API_BASE}/works'
@@ -150,14 +149,14 @@ def download_prefix(prefix: str, email: str | None = None, limit: int | None = N
         raise
 
 
-def _join_list(value) -> str:
+def _join_list(value: list | str | None) -> str:
     """Join list to semicolon-separated string."""
     if isinstance(value, list):
         return '; '.join(str(v) for v in value)
     return str(value) if pd.notna(value) else ''
 
 
-def _extract_date(date_field) -> str:
+def _extract_date(date_field: dict | None) -> str:
     """Extract date from Crossref date-parts structure."""
     if not date_field or not isinstance(date_field, dict):
         return ''
@@ -173,7 +172,7 @@ def _extract_date(date_field) -> str:
     return ''
 
 
-def _extract_authors(author_list) -> str:
+def _extract_authors(author_list: list[dict] | None) -> str:
     """Format authors with ORCID, ORG, and ROR bracket notation."""
     if not author_list or not isinstance(author_list, list):
         return ''
@@ -207,7 +206,7 @@ def _extract_authors(author_list) -> str:
     return '; '.join(formatted)
 
 
-def _extract_issn(issn_type_list, media_type: str) -> str:
+def _extract_issn(issn_type_list: list[dict] | None, media_type: str) -> str:
     """Extract ISSN by media type (print or electronic)."""
     if not issn_type_list or not isinstance(issn_type_list, list):
         return ''
@@ -217,7 +216,7 @@ def _extract_issn(issn_type_list, media_type: str) -> str:
     return ''
 
 
-def _extract_link(links, intended_application: str) -> str:
+def _extract_link(links: list[dict] | None, intended_application: str) -> str:
     """Extract URL by intended application type."""
     if not links or not isinstance(links, list):
         return ''
@@ -227,7 +226,7 @@ def _extract_link(links, intended_application: str) -> str:
     return ''
 
 
-def _extract_resource_url(resource) -> str:
+def _extract_resource_url(resource: dict | None) -> str:
     """Extract primary resource URL."""
     if isinstance(resource, dict) and 'primary' in resource:
         return resource['primary'].get('URL', '')

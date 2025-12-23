@@ -3,7 +3,7 @@
 import logging
 
 import pandas as pd
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, Response
 
 from crossref_xml import generate_xml, download_prefix
 
@@ -427,16 +427,16 @@ HTML_TEMPLATE = """
                             </label>
                         </div>
 
-                        <label for="license-url" style="margin-top: 16px;">Metadata License (Optional)</label>
-                        <select id="license-url" name="license_url" style="margin-bottom: 8px;">
-                            <option value="">None - No license element</option>
+                        <label for="license-url" style="margin-top: 20px; margin-bottom: 4px;">Metadata License</label>
+                        <select id="license-url" name="license_url">
+                            <option value="">None</option>
                             <option value="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal (Public Domain)</option>
                             <option value="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0 (Attribution)</option>
                             <option value="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0 (Attribution-ShareAlike)</option>
                             <option value="https://creativecommons.org/licenses/by-nc/4.0/">CC BY-NC 4.0 (Attribution-NonCommercial)</option>
                             <option value="https://creativecommons.org/licenses/by-nd/4.0/">CC BY-ND 4.0 (Attribution-NoDerivatives)</option>
                         </select>
-                        <div class="field-hint">This applies to the metadata only, not the article content</div>
+                        <div class="field-hint" style="margin-top: 4px;">Optional. Applies to metadata only.</div>
                     </fieldset>
 
                     <button type="submit">Generate XML</button>
@@ -636,13 +636,13 @@ HTML_TEMPLATE = """
 
 
 @app.route('/')
-def home():
+def home() -> str:
     """Serve the main interface."""
     return render_template_string(HTML_TEMPLATE)
 
 
 @app.route('/download')
-def download():
+def download() -> Response:
     """Download metadata from Crossref API by DOI prefix.
 
     Query params:
@@ -653,7 +653,8 @@ def download():
         custom_limit: Number of records when mode is 'custom' (optional)
 
     Returns:
-        JSON with keys: success (bool), message (str), csv (str on success)
+        JSON with keys: success (bool), message (str), csv (str on success).
+        On validation failure, success=False with error in message.
     """
     prefix = request.args.get('prefix', '').strip()
     email = request.args.get('email', '').strip()
@@ -715,7 +716,7 @@ def download():
 
 
 @app.route('/convert', methods=['POST'])
-def convert():
+def convert() -> Response:
     """Convert uploaded CSV to Crossref XML.
 
     Returns:
