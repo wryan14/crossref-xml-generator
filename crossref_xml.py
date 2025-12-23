@@ -31,7 +31,7 @@ CROSSREF_ROWS_PER_PAGE = 500
 # Download Functions
 # =============================================================================
 
-def download_prefix(prefix: str, email: str = None, limit: int = None,
+def download_prefix(prefix: str, email: str | None = None, limit: int | None = None,
                    sort_by: str = 'deposited') -> pd.DataFrame:
     """Download works for a DOI prefix from Crossref API.
 
@@ -492,7 +492,7 @@ def references_to_xml(references_str: str) -> etree.Element:
 
 def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
                  registrant: str, include_references: bool = False,
-                 license_url: str = None) -> str:
+                 license_url: str | None = None) -> str:
     """Generate Crossref 5.3.1 XML from DataFrame.
 
     Args:
