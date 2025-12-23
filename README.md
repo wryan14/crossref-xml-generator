@@ -4,7 +4,7 @@ Download, edit, and convert metadata for DOI registration.
 
 A web-based tool for metadata librarians to manage Crossref submissions without navigating complex XML schemas or APIs. Pull existing DOI metadata, modify it in a spreadsheet, and generate valid Crossref 5.3.1 XML for submission.
 
-![Web Interface](docs/images/web-interface.png)
+<img src="docs/images/web-interface.png" alt="Web Interface" width="650">
 
 ## Use Cases
 
