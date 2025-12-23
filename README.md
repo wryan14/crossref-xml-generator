@@ -33,11 +33,24 @@ A web-based tool for metadata librarians to manage Crossref submissions without 
 ## Setup
 
 ```bash
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Run the application
 python app.py
 ```
 
 Open `http://localhost:5000` in your browser.
+
+### Running Tests
+
+```bash
+pytest
+```
 
 ## Usage
 
