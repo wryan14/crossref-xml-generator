@@ -2,37 +2,61 @@
 
 Download, edit, and convert metadata for DOI registration.
 
-A web-based tool for metadata librarians to manage Crossref submissions without navigating complex XML schemas or APIs. Pull your existing DOI metadata, modify it in a spreadsheet, and generate valid Crossref 5.3.1 XML for submission.
+A web-based tool for metadata librarians to manage Crossref submissions without navigating complex XML schemas or APIs. Pull existing DOI metadata, modify it in a spreadsheet, and generate valid Crossref 5.3.1 XML for submission.
 
-## Features
+## Requirements
 
-- **Download** metadata from Crossref by DOI prefix
-- **Edit** in your preferred spreadsheet application
-- **Convert** CSV back to schema-compliant Crossref XML
-- Supports ORCID, ROR, and affiliation metadata
-- Optional reference/citation inclusion
-- No accounts or server-side storage
-- Also usable as a Python library
+- Python 3.8+
+- Dependencies: see `requirements.txt`
 
-## Quick Start
+## Setup
 
 ```bash
-pip install flask pandas lxml requests
+pip install -r requirements.txt
 python app.py
 ```
 
 Open `http://localhost:5000` in your browser.
 
-## Workflow
+## Usage
 
-1. **Download** - Enter your DOI prefix to pull all existing metadata from Crossref
-2. **Edit** - Open the CSV in Excel/Sheets, filter to records you want to update, add ORCIDs, fix affiliations
-3. **Convert** - Upload your edited CSV to generate Crossref XML
-4. **Submit** - Upload the XML to Crossref for DOI registration or updates
+### Web Interface
+
+1. **Download** — Enter a DOI prefix to pull existing metadata from Crossref
+   - Choose to download all records or filter to most recent (100, 500, 1000, or custom limit)
+2. **Edit** — Open the CSV in Excel/Sheets, filter to records needing updates, add ORCIDs, fix affiliations
+3. **Convert** — Upload edited CSV to generate Crossref XML
+4. **Submit** — Upload the XML to Crossref for DOI registration or updates
+
+### Library
+
+```python
+from crossref_xml import download_prefix, generate_xml
+import pandas as pd
+
+# Download existing metadata
+df = download_prefix('10.1234', email='you@example.org')
+df.to_csv('my-dois.csv', index=False)
+
+# Or download only most recent 500 records
+df = download_prefix('10.1234', email='you@example.org', limit=500)
+df.to_csv('my-dois.csv', index=False)
+
+# After editing...
+df = pd.read_csv('my-dois-edited.csv')
+xml = generate_xml(
+    data=df,
+    depositor_name='Library Name',
+    depositor_email='library@example.org',
+    registrant='Library Name',
+    include_references=True
+)
+
+with open('crossref-update.xml', 'w') as f:
+    f.write(xml)
+```
 
 ## CSV Format
-
-The download produces (and convert expects) these columns:
 
 ### Required Columns
 
@@ -63,19 +87,19 @@ The download produces (and convert expects) these columns:
 Authors use `Surname, Given` format with optional bracketed metadata:
 
 ```
-Smith, Jane ORCID[https://orcid.org/0000-0001-2345-6789] ORG[University of Example] ROR[https://ror.org/abc123]
+Chen, Maria ORCID[https://orcid.org/0000-0001-2345-6789] ORG[Riverside University] ROR[https://ror.org/abc123]
 ```
 
 Multiple authors separated by semicolons:
 
 ```
-Smith, Jane; Johnson, Robert ORG[Research Institute]
+Chen, Maria; Okonkwo, David ORG[Field Research Institute]
 ```
 
 Multiple affiliations for one author:
 
 ```
-Smith, Jane ORG[University of Example; Research Center] ROR[https://ror.org/abc123; https://ror.org/def456]
+Larsson, Erik ORG[Northern College; Marine Biology Center] ROR[https://ror.org/def456; https://ror.org/ghi789]
 ```
 
 The download function automatically formats author data from Crossref in this notation.
@@ -91,43 +115,20 @@ References stored as a JSON array:
 ]
 ```
 
-## Library Usage
-
-```python
-from crossref_xml import download_prefix, generate_xml
-
-# Download existing metadata
-df = download_prefix('10.1234', email='you@example.org')
-df.to_csv('my-dois.csv', index=False)
-
-# ... edit CSV in spreadsheet ...
-
-# Generate XML from edited data
-import pandas as pd
-df = pd.read_csv('my-dois-edited.csv')
-
-xml = generate_xml(
-    data=df,
-    depositor_name='Library Name',
-    depositor_email='library@example.org',
-    registrant='Library Name',
-    include_references=True
-)
-
-with open('crossref-update.xml', 'w') as f:
-    f.write(xml)
-```
+See `docs/csv-guide.md` for detailed field documentation including transformation examples and edge cases.
 
 ## API Reference
 
-### download_prefix(prefix, email=None) -> DataFrame
+### download_prefix(prefix, email=None, limit=None, sort_by='deposited') → DataFrame
 
-Download all works for a DOI prefix from Crossref API.
+Download works for a DOI prefix from Crossref API.
 
 - `prefix`: DOI prefix (e.g., '10.1234')
 - `email`: Optional contact email for Crossref polite pool (faster rate limits)
+- `limit`: Optional maximum number of records to download (None = all records)
+- `sort_by`: Field to sort by when limit is specified ('deposited', 'updated', 'indexed', 'published'). Defaults to 'deposited' for most recent records.
 
-### generate_xml(data, depositor_name, depositor_email, registrant, include_references=False) -> str
+### generate_xml(data, depositor_name, depositor_email, registrant, include_references=False, license_url=None) → str
 
 Generate Crossref 5.3.1 XML from DataFrame.
 
@@ -136,14 +137,21 @@ Generate Crossref 5.3.1 XML from DataFrame.
 - `depositor_email`: Contact email for registration issues
 - `registrant`: Registrant identifier (usually same as depositor_name)
 - `include_references`: Include citation list in output
+- `license_url`: Optional metadata license URL (e.g., Creative Commons license). If None, no license element is added.
 
-### validate_csv(df) -> list
+### validate_csv(df) → list
 
 Check DataFrame for required columns. Returns list of error messages.
 
-### parse_contributors(authors_str) -> list
+### parse_contributors(authors_str) → list
 
 Parse author string with bracket notation into structured data.
+
+## Validation
+
+Before submitting to Crossref, validate your XML using the [Crossref Metadata Parser](https://www.crossref.org/02publishers/parser.html). This catches schema errors and malformed data before submission.
+
+Spot-check a few records manually against your source data—automated transformations can propagate errors silently across hundreds of records.
 
 ## Limitations
 
@@ -153,4 +161,4 @@ Parse author string with bracket notation into structured data.
 
 ## License
 
-[CC0 1.0 Universal](LICENSE) - Public Domain
+[CC0 1.0 Universal](LICENSE)

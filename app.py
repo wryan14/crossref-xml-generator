@@ -339,6 +339,43 @@ HTML_TEMPLATE = """
                     <input type="email" id="contact-email" name="email" placeholder="you@example.org">
                     <div class="field-hint">Providing an email enables faster API access via Crossref's polite pool</div>
 
+                    <fieldset style="margin-top: 24px; padding: 16px; border: 1px solid var(--border); border-radius: 4px;">
+                        <legend style="padding: 0 8px; font-weight: 600;">Download Options</legend>
+
+                        <label style="display: block; cursor: pointer;">
+                            <input type="radio" name="download_mode" value="all" checked>
+                            Download all records
+                        </label>
+
+                        <label style="display: block; margin-top: 12px; cursor: pointer;">
+                            <input type="radio" name="download_mode" value="preset">
+                            Download most recent:
+                        </label>
+
+                        <div id="preset-options" style="margin-left: 24px; margin-top: 8px; display: none;">
+                            <select id="preset-limit" style="width: 200px; padding: 8px; border: 1px solid var(--border); border-radius: 4px;">
+                                <option value="100">100 records</option>
+                                <option value="500" selected>500 records</option>
+                                <option value="1000">1000 records</option>
+                            </select>
+                        </div>
+
+                        <label style="display: block; margin-top: 12px; cursor: pointer;">
+                            <input type="radio" name="download_mode" value="custom">
+                            Custom limit:
+                        </label>
+
+                        <div id="custom-limit-input" style="margin-left: 24px; margin-top: 8px; display: none;">
+                            <input type="number" id="custom-limit" placeholder="Enter number of records"
+                                   min="1" max="10000"
+                                   style="width: 200px; padding: 8px; border: 1px solid var(--border); border-radius: 4px;">
+                        </div>
+
+                        <div class="field-hint" style="margin-top: 12px;">
+                            "Most recent" means records sorted by deposit date (when they were last added/updated in Crossref)
+                        </div>
+                    </fieldset>
+
                     <button type="submit">Download Metadata</button>
                 </form>
 
@@ -389,6 +426,17 @@ HTML_TEMPLATE = """
                                 <span>Include references in XML output</span>
                             </label>
                         </div>
+
+                        <label for="license-url" style="margin-top: 16px;">Metadata License (Optional)</label>
+                        <select id="license-url" name="license_url" style="margin-bottom: 8px;">
+                            <option value="">None - No license element</option>
+                            <option value="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal (Public Domain)</option>
+                            <option value="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0 (Attribution)</option>
+                            <option value="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0 (Attribution-ShareAlike)</option>
+                            <option value="https://creativecommons.org/licenses/by-nc/4.0/">CC BY-NC 4.0 (Attribution-NonCommercial)</option>
+                            <option value="https://creativecommons.org/licenses/by-nd/4.0/">CC BY-ND 4.0 (Attribution-NoDerivatives)</option>
+                        </select>
+                        <div class="field-hint">This applies to the metadata only, not the article content</div>
                     </fieldset>
 
                     <button type="submit">Generate XML</button>
@@ -423,6 +471,17 @@ HTML_TEMPLATE = """
             });
         });
 
+        // Download mode radio button handlers
+        document.querySelectorAll('input[name="download_mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const presetOptions = document.getElementById('preset-options');
+                const customLimitInput = document.getElementById('custom-limit-input');
+
+                presetOptions.style.display = e.target.value === 'preset' ? 'block' : 'none';
+                customLimitInput.style.display = e.target.value === 'custom' ? 'block' : 'none';
+            });
+        });
+
         // Load saved depositor info
         const savedDepositorName = localStorage.getItem('crossref_depositor_name');
         const savedDepositorEmail = localStorage.getItem('crossref_depositor_email');
@@ -447,8 +506,21 @@ HTML_TEMPLATE = """
             const prefix = document.getElementById('doi-prefix').value.trim();
             const email = document.getElementById('contact-email').value.trim();
 
+            // Get download mode and limit
+            const downloadMode = document.querySelector('input[name="download_mode"]:checked').value;
+
             if (email) {
                 localStorage.setItem('crossref_contact_email', email);
+            }
+
+            // Validate custom limit if selected
+            if (downloadMode === 'custom') {
+                const customLimit = document.getElementById('custom-limit').value.trim();
+                if (!customLimit) {
+                    downloadStatus.className = 'status error show';
+                    downloadStatus.textContent = 'Error: Please enter a custom limit';
+                    return;
+                }
             }
 
             downloadProcessing.textContent = 'Fetching metadata from Crossref API (this may take a minute for large collections)...';
@@ -458,8 +530,14 @@ HTML_TEMPLATE = """
             downloadForm.querySelector('button').disabled = true;
 
             try {
-                const params = new URLSearchParams({ prefix });
+                const params = new URLSearchParams({ prefix, download_mode: downloadMode });
                 if (email) params.append('email', email);
+
+                if (downloadMode === 'preset') {
+                    params.append('preset_limit', document.getElementById('preset-limit').value);
+                } else if (downloadMode === 'custom') {
+                    params.append('custom_limit', document.getElementById('custom-limit').value.trim());
+                }
 
                 const response = await fetch('/download?' + params.toString());
                 const result = await response.json();
@@ -570,12 +648,16 @@ def download():
     Query params:
         prefix: DOI prefix (required)
         email: Contact email for polite pool (optional)
+        download_mode: 'all', 'preset', or 'custom' (optional, default 'all')
+        preset_limit: Number of records when mode is 'preset' (optional)
+        custom_limit: Number of records when mode is 'custom' (optional)
 
     Returns:
         JSON with keys: success (bool), message (str), csv (str on success)
     """
     prefix = request.args.get('prefix', '').strip()
     email = request.args.get('email', '').strip()
+    download_mode = request.args.get('download_mode', 'all')
 
     if not prefix:
         return jsonify({'success': False, 'message': 'DOI prefix is required'})
@@ -583,17 +665,44 @@ def download():
     if not prefix.startswith('10.'):
         return jsonify({'success': False, 'message': 'DOI prefix must start with 10.'})
 
+    # Extract and validate limit parameter
+    limit = None
+    if download_mode == 'preset':
+        try:
+            limit = int(request.args.get('preset_limit', 500))
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Invalid preset limit'})
+    elif download_mode == 'custom':
+        custom_limit = request.args.get('custom_limit', '').strip()
+        if custom_limit:
+            try:
+                limit = int(custom_limit)
+            except ValueError:
+                return jsonify({'success': False, 'message': 'Custom limit must be a number'})
+
+    # Validate limit range
+    if limit is not None:
+        if limit <= 0:
+            return jsonify({'success': False, 'message': 'Limit must be greater than 0'})
+        if limit > 10000:
+            return jsonify({'success': False, 'message': 'Limit cannot exceed 10,000 records'})
+
     try:
-        logger.info(f"Downloading metadata for prefix {prefix}")
-        df = download_prefix(prefix, email if email else None)
+        logger.info(f"Downloading metadata for prefix {prefix} (limit={limit})")
+        df = download_prefix(prefix, email if email else None, limit=limit)
 
         csv_buffer = df.to_csv(index=False)
         record_count = len(df)
 
+        if limit:
+            message = f'Downloaded {record_count} most recent records (sorted by deposit date)'
+        else:
+            message = f'Downloaded {record_count} records'
+
         logger.info(f"Downloaded {record_count} records for prefix {prefix}")
         return jsonify({
             'success': True,
-            'message': f'Downloaded {record_count} records',
+            'message': message,
             'csv': csv_buffer
         })
 
@@ -618,6 +727,7 @@ def convert():
         depositor_email = request.form.get('depositor_email', '').strip()
         registrant = request.form.get('registrant', '').strip()
         include_references = request.form.get('include_references', 'false').lower() == 'true'
+        license_url = request.form.get('license_url', '').strip() or None
 
         if not csv_file or not csv_file.filename:
             return jsonify({'success': False, 'message': 'CSV file is required'})
@@ -650,7 +760,8 @@ def convert():
                 depositor_name=depositor_name,
                 depositor_email=depositor_email,
                 registrant=registrant,
-                include_references=include_references
+                include_references=include_references,
+                license_url=license_url
             )
         except ValueError as e:
             return jsonify({'success': False, 'message': str(e)})

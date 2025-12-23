@@ -12,8 +12,8 @@
   <body>
     <journal>
       <journal_metadata>
-        <full_title>Journal of Economic Research</full_title>
-        <abbrev_title>journalofeconomicres</abbrev_title>
+        <full_title>Journal of Applied Ecology</full_title>
+        <abbrev_title>journalofappliedecol</abbrev_title>
         <issn media_type="print">1234-5678</issn>
         <issn media_type="electronic">8765-4321</issn>
       </journal_metadata>
@@ -29,32 +29,32 @@
       </journal_issue>
       <journal_article publication_type="full_text">
         <titles>
-          <title>Effects of Monetary Policy on Regional Banking Stability</title>
+          <title>Pollinator Diversity in Urban Garden Ecosystems</title>
         </titles>
         <contributors>
           <person_name contributor_role="author" sequence="first">
-            <given_name>Jane</given_name>
-            <surname>Smith</surname>
+            <given_name>Maria</given_name>
+            <surname>Chen</surname>
             <affiliations>
               <institution>
-                <institution_name>University of Example</institution_name>
+                <institution_name>Riverside University</institution_name>
                 <institution_id type="ror">https://ror.org/abc123</institution_id>
               </institution>
             </affiliations>
             <ORCID>https://orcid.org/0000-0001-2345-6789</ORCID>
           </person_name>
           <person_name contributor_role="author" sequence="additional">
-            <given_name>Robert</given_name>
-            <surname>Johnson</surname>
+            <given_name>David</given_name>
+            <surname>Okonkwo</surname>
             <affiliations>
               <institution>
-                <institution_name>Research Institute</institution_name>
+                <institution_name>Field Research Institute</institution_name>
               </institution>
             </affiliations>
           </person_name>
         </contributors>
         <jats:abstract xmlns:jats="http://www.ncbi.nlm.nih.gov/JATS1">
-          <jats:p>This paper examines the relationship between monetary policy decisions and regional banking stability using panel data from 2010-2023.</jats:p>
+          <jats:p>This study surveys bee and butterfly populations across 47 urban gardens to assess biodiversity indicators and habitat connectivity.</jats:p>
         </jats:abstract>
         <publication_date media_type="online">
           <month>03</month>
@@ -110,19 +110,19 @@
       </journal_issue>
       <journal_article publication_type="full_text">
         <titles>
-          <title>Machine Learning Applications in Library Metadata Quality</title>
+          <title>Metadata Quality Assessment Using Transformer Models</title>
         </titles>
         <contributors>
           <person_name contributor_role="author" sequence="first">
-            <given_name>Sarah</given_name>
-            <surname>Williams</surname>
+            <given_name>Erik</given_name>
+            <surname>Larsson</surname>
             <affiliations>
               <institution>
-                <institution_name>State University</institution_name>
+                <institution_name>Northern College</institution_name>
                 <institution_id type="ror">https://ror.org/def456</institution_id>
               </institution>
               <institution>
-                <institution_name>Digital Humanities Center</institution_name>
+                <institution_name>Marine Biology Center</institution_name>
                 <institution_id type="ror">https://ror.org/ghi789</institution_id>
               </institution>
             </affiliations>
@@ -130,7 +130,7 @@
           </person_name>
         </contributors>
         <jats:abstract xmlns:jats="http://www.ncbi.nlm.nih.gov/JATS1">
-          <jats:p>We present a novel approach to automated metadata quality assessment using transformer-based language models.</jats:p>
+          <jats:p>We present an approach to automated metadata quality assessment using transformer-based language models trained on library catalog records.</jats:p>
         </jats:abstract>
         <publication_date media_type="online">
           <month>04</month>
@@ -161,8 +161,8 @@
     </journal>
     <journal>
       <journal_metadata>
-        <full_title>Scholarly Communication Review</full_title>
-        <abbrev_title>scholarlycommunicati</abbrev_title>
+        <full_title>Public Health Research</full_title>
+        <abbrev_title>publichealthresearch</abbrev_title>
         <issn media_type="electronic">3456-7890</issn>
       </journal_metadata>
       <journal_issue>
@@ -176,21 +176,21 @@
       </journal_issue>
       <journal_article publication_type="full_text">
         <titles>
-          <title>Open Access Publishing Trends 2020-2024</title>
+          <title>Community Health Outcomes in Rural Watersheds</title>
         </titles>
         <contributors>
           <person_name contributor_role="author" sequence="first">
-            <given_name>Michael</given_name>
-            <surname>Brown</surname>
+            <given_name>Yuki</given_name>
+            <surname>Nakamura</surname>
           </person_name>
           <person_name contributor_role="author" sequence="additional">
-            <given_name>Emily</given_name>
-            <surname>Davis</surname>
+            <given_name>Elena</given_name>
+            <surname>Santos</surname>
             <ORCID>https://orcid.org/0000-0003-4567-8901</ORCID>
           </person_name>
         </contributors>
         <jats:abstract xmlns:jats="http://www.ncbi.nlm.nih.gov/JATS1">
-          <jats:p>An analysis of open access publishing trends across academic disciplines.</jats:p>
+          <jats:p>An analysis of drinking water quality and associated health indicators across 23 rural communities.</jats:p>
         </jats:abstract>
         <publication_date media_type="online">
           <month>05</month>

@@ -31,28 +31,60 @@ CROSSREF_ROWS_PER_PAGE = 500
 # Download Functions
 # =============================================================================
 
-def download_prefix(prefix: str, email: str = None) -> pd.DataFrame:
-    """Download all works for a DOI prefix from Crossref API.
+def download_prefix(prefix: str, email: str = None, limit: int = None,
+                   sort_by: str = 'deposited') -> pd.DataFrame:
+    """Download works for a DOI prefix from Crossref API.
 
     Args:
         prefix: DOI prefix (e.g., '10.1234')
         email: Contact email for polite pool access (recommended for large requests)
+        limit: Maximum number of records to download (None = all records)
+        sort_by: Field to sort by when limit is specified ('deposited', 'updated',
+                'indexed', 'published'). Defaults to 'deposited' for most recent.
 
     Returns:
         DataFrame with columns matching the CSV schema expected by generate_xml
 
     Raises:
-        ValueError: If API returns invalid response or no data
+        ValueError: If API returns invalid response, no data, or invalid parameters
         requests.RequestException: If API requests fail
     """
-    works_url = f'{CROSSREF_API_BASE}/prefixes/{prefix}/works'
-    params = {'rows': CROSSREF_ROWS_PER_PAGE, 'cursor': '*'}
-    headers = {'User-Agent': f'CrossrefXMLGenerator/1.0 (mailto:{email})' if email else 'CrossrefXMLGenerator/1.0'}
+    # Validate parameters
+    if limit is not None and limit <= 0:
+        raise ValueError("Limit must be greater than 0")
 
+    valid_sort_fields = ['deposited', 'updated', 'indexed', 'published',
+                        'published-print', 'published-online', 'issued']
+    if sort_by not in valid_sort_fields:
+        raise ValueError(f"Invalid sort_by value: {sort_by}. Must be one of {valid_sort_fields}")
+
+    headers = {'User-Agent': f'CrossrefXMLGenerator/1.0 (mailto:{email})' if email else 'CrossrefXMLGenerator/1.0'}
     all_items = []
 
+    # Use different endpoints based on whether we need sorting
+    # /prefixes endpoint doesn't support sorting, so use /works with filter when limit specified
+    if limit is not None:
+        # Use /works endpoint with filter for sorting support
+        works_url = f'{CROSSREF_API_BASE}/works'
+        params = {
+            'filter': f'prefix:{prefix}',
+            'rows': CROSSREF_ROWS_PER_PAGE,
+            'sort': sort_by,
+            'order': 'desc',
+            'offset': 0
+        }
+        use_cursor = False
+    else:
+        # Use /prefixes endpoint with cursor pagination for full downloads
+        works_url = f'{CROSSREF_API_BASE}/prefixes/{prefix}/works'
+        params = {'rows': CROSSREF_ROWS_PER_PAGE, 'cursor': '*'}
+        use_cursor = True
+
     try:
-        logger.info(f"Fetching Crossref metadata for prefix {prefix}")
+        if limit is not None:
+            logger.info(f"Fetching most recent {limit} records for prefix {prefix} (sorted by {sort_by})")
+        else:
+            logger.info(f"Fetching all Crossref metadata for prefix {prefix}")
 
         resp = requests.get(works_url, params=params, headers=headers, timeout=60)
         resp.raise_for_status()
@@ -63,19 +95,36 @@ def download_prefix(prefix: str, email: str = None) -> pd.DataFrame:
 
         all_items.extend(data['message']['items'])
         total = data['message'].get('total-results', 0)
-        pages = math.ceil(total / CROSSREF_ROWS_PER_PAGE)
 
-        logger.info(f"Found {total} records, fetching {pages} pages")
+        # Calculate pages needed based on limit
+        if limit is not None:
+            pages_needed = math.ceil(limit / CROSSREF_ROWS_PER_PAGE)
+            pages = min(math.ceil(total / CROSSREF_ROWS_PER_PAGE), pages_needed)
+        else:
+            pages = math.ceil(total / CROSSREF_ROWS_PER_PAGE)
 
-        cursor = data['message'].get('next-cursor')
+        logger.info(f"Found {total} total records, fetching {pages} pages")
+
+        # Pagination loop
         for page in range(1, pages):
-            if not cursor:
+            # Check if we've reached limit
+            if limit and len(all_items) >= limit:
+                logger.info(f"Reached limit of {limit} records")
                 break
 
             if page % 5 == 0:
                 logger.info(f"Progress: page {page}/{pages}")
 
-            params['cursor'] = cursor
+            if use_cursor:
+                # Cursor-based pagination
+                cursor = data['message'].get('next-cursor')
+                if not cursor:
+                    break
+                params['cursor'] = cursor
+            else:
+                # Offset-based pagination
+                params['offset'] = page * CROSSREF_ROWS_PER_PAGE
+
             resp = requests.get(works_url, params=params, headers=headers, timeout=60)
             resp.raise_for_status()
             data = resp.json()
@@ -85,7 +134,10 @@ def download_prefix(prefix: str, email: str = None) -> pd.DataFrame:
                 break
 
             all_items.extend(data['message']['items'])
-            cursor = data['message'].get('next-cursor')
+
+        # Truncate to exact limit if specified
+        if limit and len(all_items) > limit:
+            all_items = all_items[:limit]
 
         if not all_items:
             raise ValueError(f"No records found for prefix {prefix}")
@@ -439,7 +491,8 @@ def references_to_xml(references_str: str) -> etree.Element:
 # =============================================================================
 
 def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
-                 registrant: str, include_references: bool = False) -> str:
+                 registrant: str, include_references: bool = False,
+                 license_url: str = None) -> str:
     """Generate Crossref 5.3.1 XML from DataFrame.
 
     Args:
@@ -448,6 +501,7 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
         depositor_email: Contact email for the depositor
         registrant: Registrant identifier
         include_references: When True, includes references column as citations
+        license_url: Optional license URL for metadata. If None, no license element is added.
 
     Returns:
         Crossref 5.3.1 XML document as string
@@ -599,17 +653,19 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
                 first_page = etree.SubElement(pages_elem, 'first_page')
                 first_page.text = page_str
 
-        ai_program = etree.SubElement(
-            journal_article,
-            '{http://www.crossref.org/AccessIndicators.xsd}program',
-            name='AccessIndicators'
-        )
-        license_ref = etree.SubElement(
-            ai_program,
-            '{http://www.crossref.org/AccessIndicators.xsd}license_ref',
-            applies_to='vor'
-        )
-        license_ref.text = 'https://creativecommons.org/publicdomain/zero/1.0/'
+        # Add license element if provided
+        if license_url:
+            ai_program = etree.SubElement(
+                journal_article,
+                '{http://www.crossref.org/AccessIndicators.xsd}program',
+                name='AccessIndicators'
+            )
+            license_ref = etree.SubElement(
+                ai_program,
+                '{http://www.crossref.org/AccessIndicators.xsd}license_ref',
+                applies_to='vor'
+            )
+            license_ref.text = license_url
 
         doi_data = etree.SubElement(journal_article, 'doi_data')
 
