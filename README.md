@@ -27,7 +27,7 @@ A web-based tool for metadata librarians to manage Crossref submissions without 
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - Dependencies: see `requirements.txt`
 
 ## Setup
