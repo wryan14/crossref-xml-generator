@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 from flask import Flask, render_template_string, request, jsonify, Response
 
-from crossref_xml import generate_xml, download_prefix
+from crossref_xml import SUPPORTED_RECORD_TYPE, generate_xml, download_prefix
 
 logging.basicConfig(
     level=logging.INFO,
@@ -699,6 +699,12 @@ def download() -> Response:
             message = f'Downloaded {record_count} most recent records (sorted by deposit date)'
         else:
             message = f'Downloaded {record_count} records'
+
+        unsupported = df.loc[df['type'] != SUPPORTED_RECORD_TYPE, 'type'].value_counts()
+        if not unsupported.empty:
+            breakdown = ', '.join(f'{count} {name or "untyped"}' for name, count in unsupported.items())
+            message += (f'. {unsupported.sum()} are not journal articles ({breakdown}); '
+                        'remove those rows before converting, since only journal articles are supported')
 
         logger.info(f"Downloaded {record_count} records for prefix {prefix}")
         return jsonify({

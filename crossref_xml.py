@@ -33,6 +33,9 @@ CROSSREF_ROWS_PER_PAGE = 500
 # 500 records keeps a typical file well under that and failures easy to trace.
 MAX_RECORDS_PER_FILE = 500
 
+# Crossref REST API work type this tool can convert to XML
+SUPPORTED_RECORD_TYPE = 'journal-article'
+
 SCHEMA_VERSION = '5.3.1'
 # Crossref does not publish its XSDs under an explicit license, so they are not
 # bundled here. Run scripts/fetch_crossref_schema.py to download them.
@@ -297,6 +300,10 @@ def _normalize_crossref_data(df: pd.DataFrame) -> pd.DataFrame:
     else:
         result['references'] = ''
 
+    # Prefixes often mix record types; keep the type so conversion can refuse
+    # anything that is not a journal article instead of mislabeling it.
+    result['type'] = df['type'] if 'type' in df.columns else ''
+
     return result
 
 
@@ -371,6 +378,11 @@ def _row_errors(row: pd.Series, include_references: bool = False) -> list:
 
     if not _cell(row, 'title'):
         errors.append('title is empty')
+
+    record_type = _cell(row, 'type')
+    if record_type and record_type != SUPPORTED_RECORD_TYPE:
+        errors.append(f"type '{record_type}' is not supported; only {SUPPORTED_RECORD_TYPE} "
+                      "records can be converted")
 
     publication = _cell(row, 'publication')
     if not publication:
