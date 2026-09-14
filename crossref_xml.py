@@ -28,6 +28,10 @@ REQUIRED_COLUMNS = ['doi', 'title', 'publication', 'authors']
 CROSSREF_API_BASE = 'https://api.crossref.org'
 CROSSREF_ROWS_PER_PAGE = 500
 
+# Application limit, not a Crossref rule: Crossref caps deposit files at 10 MB.
+# 500 records keeps a typical file well under that and failures easy to trace.
+MAX_RECORDS_PER_FILE = 500
+
 SCHEMA_VERSION = '5.3.1'
 # Crossref does not publish its XSDs under an explicit license, so they are not
 # bundled here. Run scripts/fetch_crossref_schema.py to download them.
@@ -558,15 +562,22 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
         Crossref 5.3.1 XML document as string
 
     Raises:
-        ValueError: When required columns are missing
+        ValueError: When required columns are missing, or when data has more
+            than MAX_RECORDS_PER_FILE rows (records are never silently dropped)
     """
+    if len(data) > MAX_RECORDS_PER_FILE:
+        raise ValueError(
+            f"CSV contains {len(data)} records; this tool generates at most "
+            f"{MAX_RECORDS_PER_FILE} records per XML file. Split the CSV into "
+            f"files of {MAX_RECORDS_PER_FILE} rows or fewer and convert each one."
+        )
+
     errors = validate_csv(data)
     if errors:
         raise ValueError('; '.join(errors))
 
     data = data[data['doi'].notna() & (data['doi'] != '')]
     data = data[data['title'].notna() & (data['title'] != '')]
-    data = data.head(500)
 
     root = etree.Element(
         '{http://www.crossref.org/schema/5.3.1}doi_batch',

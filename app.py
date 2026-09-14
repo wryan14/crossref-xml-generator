@@ -767,8 +767,8 @@ def convert() -> Response:
         except ValueError as e:
             return jsonify({'success': False, 'message': str(e)})
 
-        record_count = min(len(data), 500)
-        message = f'Generated XML for {record_count} records'
+        record_count = xml_content.count('<journal_article ')
+        message = f'Generated XML for {record_count} of {len(data)} records'
         if include_references:
             message += ' with references'
 
