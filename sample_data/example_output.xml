@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <doi_batch xmlns="http://www.crossref.org/schema/5.3.1" xmlns:ai="http://www.crossref.org/AccessIndicators.xsd" xmlns:jats="http://www.ncbi.nlm.nih.gov/JATS1" xmlns:fr="http://www.crossref.org/fundref.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.crossref.org/schema/5.3.1 https://www.crossref.org/schemas/crossref5.3.1.xsd" version="5.3.1">
   <head>
-    <doi_batch_id>batch_20251215152357315</doi_batch_id>
-    <timestamp>20251215152357315</timestamp>
+    <doi_batch_id>batch_20260914170125852</doi_batch_id>
+    <timestamp>20260914170125852</timestamp>
     <depositor>
       <depositor_name>Test Library</depositor_name>
       <email_address>test@example.org</email_address>
@@ -13,7 +13,6 @@
     <journal>
       <journal_metadata>
         <full_title>Journal of Applied Ecology</full_title>
-        <abbrev_title>journalofappliedecol</abbrev_title>
         <issn media_type="print">1234-5678</issn>
         <issn media_type="electronic">8765-4321</issn>
       </journal_metadata>
@@ -94,7 +93,6 @@
     <journal>
       <journal_metadata>
         <full_title>Digital Library Quarterly</full_title>
-        <abbrev_title>digitallibraryquarte</abbrev_title>
         <issn media_type="print">2345-6789</issn>
         <issn media_type="electronic">9876-5432</issn>
       </journal_metadata>
@@ -162,7 +160,6 @@
     <journal>
       <journal_metadata>
         <full_title>Public Health Research</full_title>
-        <abbrev_title>publichealthresearch</abbrev_title>
         <issn media_type="electronic">3456-7890</issn>
       </journal_metadata>
       <journal_issue>
