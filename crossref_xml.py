@@ -6,11 +6,13 @@ This module provides tools for:
 """
 
 import ast
+import os
 import re
 import json
 import math
 import datetime
 import logging
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -25,6 +27,11 @@ logger = logging.getLogger(__name__)
 REQUIRED_COLUMNS = ['doi', 'title', 'publication', 'authors']
 CROSSREF_API_BASE = 'https://api.crossref.org'
 CROSSREF_ROWS_PER_PAGE = 500
+
+SCHEMA_VERSION = '5.3.1'
+# Crossref does not publish its XSDs under an explicit license, so they are not
+# bundled here. Run scripts/fetch_crossref_schema.py to download them.
+DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parent / 'schemas' / 'crossref'
 
 
 # =============================================================================
@@ -297,6 +304,51 @@ def validate_csv(df: pd.DataFrame) -> list:
         errors.append(f"{empty_titles} rows have empty title values")
 
     return errors
+
+
+def schema_dir() -> Path:
+    """Return the directory holding Crossref XSD files (CROSSREF_SCHEMA_DIR overrides)."""
+    return Path(os.environ.get('CROSSREF_SCHEMA_DIR') or DEFAULT_SCHEMA_DIR)
+
+
+def load_schema(directory: str | Path | None = None) -> etree.XMLSchema:
+    """Load the Crossref 5.3.1 XSD from a local directory without network access.
+
+    Raises:
+        FileNotFoundError: If the schema files have not been downloaded
+    """
+    directory = Path(directory) if directory else schema_dir()
+    xsd_path = directory / f'crossref{SCHEMA_VERSION}.xsd'
+    if not xsd_path.is_file():
+        raise FileNotFoundError(
+            f"Crossref schema not found at {xsd_path}. "
+            "Run: python scripts/fetch_crossref_schema.py"
+        )
+    parser = etree.XMLParser(no_network=True)
+    return etree.XMLSchema(etree.parse(str(xsd_path), parser))
+
+
+def validate_xml(xml: str | bytes, schema: etree.XMLSchema | None = None) -> list:
+    """Validate generated XML against the Crossref 5.3.1 XSD.
+
+    Schema validity is necessary but not sufficient for a successful deposit:
+    Crossref also applies business rules (prefix ownership, title matching,
+    etc.) that no XSD can check.
+
+    Args:
+        xml: XML document as produced by generate_xml
+        schema: Preloaded schema; loaded from schema_dir() when omitted
+
+    Returns:
+        List of error messages (with line numbers), empty if valid
+    """
+    schema = schema or load_schema()
+    if isinstance(xml, str):
+        xml = xml.encode('utf-8')
+    doc = etree.fromstring(xml, etree.XMLParser(no_network=True))
+    if schema.validate(doc):
+        return []
+    return [f"line {err.line}: {err.message}" for err in schema.error_log]
 
 
 # =============================================================================

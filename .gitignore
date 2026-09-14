@@ -12,3 +12,6 @@ build/
 *.log
 .DS_Store
 .pytest_cache/
+
+# Crossref XSD files downloaded by scripts/fetch_crossref_schema.py
+schemas/crossref/
