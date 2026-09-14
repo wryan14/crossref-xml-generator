@@ -1,10 +1,31 @@
 # Crossref XML Generator
 
-Download, edit, and convert metadata for DOI registration.
+[![Tests](https://github.com/wryan14/crossref-xml-generator/actions/workflows/tests.yml/badge.svg)](https://github.com/wryan14/crossref-xml-generator/actions/workflows/tests.yml)
 
-A web-based tool for metadata librarians to manage Crossref submissions without navigating complex XML schemas or APIs. Pull existing DOI metadata, modify it in a spreadsheet, and generate Crossref 5.3.1 XML for submission. Input is validated before any XML is produced, and output can be checked against the official Crossref 5.3.1 XSD.
+A tool for metadata librarians and repository administrators to download Crossref metadata, edit it through a spreadsheet-friendly workflow, and generate validated Crossref XML for registration or updates.
+
+It runs as a small local web app or as a Python library. Each row of the CSV must pass input validation before any XML is produced. The generated Crossref 5.3.1 XML can then be checked against Crossref's official schema.
 
 <img src="docs/images/web-interface.png" alt="Web Interface" width="650">
+
+## How It Works
+
+1. **Download** existing journal-article metadata from Crossref by DOI prefix, as a CSV.
+2. **Edit** the CSV in Excel or Google Sheets: add ORCIDs and ROR IDs, fix names, affiliations, or dates.
+3. **Convert** the CSV to Crossref XML. If any row has a problem, nothing is generated and each problem is listed with its spreadsheet row number.
+4. **Submit** the XML to Crossref yourself. This tool does not deposit anything.
+
+> **Important: this is not a lossless round trip.** When you redeposit an existing DOI, Crossref [replaces that record's metadata](https://www.crossref.org/documentation/register-maintain-records/maintaining-your-metadata/updating-your-metadata/) with what the new deposit contains. This tool only carries the fields listed under [Supported and Omitted Metadata](#supported-and-omitted-metadata). If a record in Crossref has metadata the CSV does not carry, such as funding, editors, subtitles, or separate print and online dates, downloading, editing, and redepositing it can remove that metadata. Before redepositing, check whether your records use any omitted fields.
+
+## Scope
+
+This project is intentionally bounded: it is a spreadsheet workflow for common journal-article corrections and enrichment, not a general Crossref metadata editor.
+
+- **Record type:** journal articles only. Other Crossref types in a downloaded prefix (book chapters, datasets, conference papers, posted content, ...) are reported on download and refused at conversion.
+- **Schema:** Crossref deposit schema 5.3.1.
+- **Fields:** titles, authors (people and organizations) with ORCID, affiliations, and ROR IDs, plus publication date, volume, issue, pages, abstract, ISSNs, landing page and PDF links, references, and one content license. [Full table below](#supported-and-omitted-metadata).
+- **Batch size:** at most 500 records per generated XML file. This is the tool's own limit, separate from [Crossref's limits](#limitations).
+- **Submission:** produces files for you to upload; it never contacts Crossref's deposit system.
 
 ## Use Cases
 
@@ -25,16 +46,21 @@ A web-based tool for metadata librarians to manage Crossref submissions without 
 - No XML syntax knowledge required for metadata staff
 - Version control friendly for tracking changes
 
-> **Before resubmitting downloaded records:** this tool round-trips only the fields listed under [Supported and Omitted Metadata](#supported-and-omitted-metadata). Crossref [overwrites existing metadata](https://www.crossref.org/documentation/register-maintain-records/maintaining-your-metadata/updating-your-metadata/) with an update deposit and nulls fields that are not supplied. Bibliographic metadata the CSV does not carry, such as funding, editors and other contributor roles, subtitles, or separate print and online dates, can therefore be removed from Crossref when you redeposit. References, Crossmark, and relations follow their own update procedures. Check that section first.
-
 ## Requirements
 
 - Python 3.10+ (the code uses PEP 604 `X | Y` type hints)
 - Dependencies: see `requirements.txt`
 
-### Tested environment
+### Tested vs. intended compatibility
 
-The test suite passes on Python 3.12.3 with the exact versions in `requirements-tested.txt` (Flask 3.1.3, pandas 3.0.5, lxml 6.1.3, requests 2.34.2). It also passes with pandas 2.3.3. `requirements.txt` stays unpinned so the tool installs alongside other packages; if something breaks after an upgrade, install `requirements-tested.txt` to get the known-good set.
+| Environment | Status |
+|-------------|--------|
+| Python 3.12.3, Flask 3.1.3, pandas 3.0.5, lxml 6.1.3, requests 2.34.2 | Tested locally (full suite, including schema validation) |
+| Python 3.12.3 with pandas 2.3.3 | Tested locally |
+| Python 3.10, 3.11, 3.12, 3.13 | Run by [GitHub Actions](https://github.com/wryan14/crossref-xml-generator/actions/workflows/tests.yml) on every push; see the badge above for the current result |
+| Other versions and operating systems | Intended to work, not tested |
+
+`requirements.txt` is unpinned so the tool installs alongside other packages. `requirements-tested.txt` records the exact package set used for local testing; install it if an upgrade breaks something.
 
 ## Setup
 
@@ -56,14 +82,19 @@ Open `http://localhost:5000` in your browser.
 
 ### Running Tests
 
+The schema-validation tests need Crossref's 5.3.1 XSD, which you download once:
+
 ```bash
-# One-time: download the Crossref 5.3.1 XSD used by schema-validation tests
+# Download the schema and verify every file against pinned SHA-256 checksums
 python scripts/fetch_crossref_schema.py
 
 pytest
 ```
 
-Schema-validation tests are skipped, with a message saying so, until the XSD has been downloaded. The files are fetched from Crossref's [official schema repository](https://gitlab.com/crossref/schema) at a pinned commit rather than committed here, because that repository does not state a license. Set `CROSSREF_SCHEMA_DIR` to use a copy stored elsewhere.
+- **Source:** Crossref's [official schema repository](https://gitlab.com/crossref/schema), pinned to commit `0dfa3bde531b43107b5f7e899c1a65047e22155b`. The script refuses any file whose checksum differs and records the source in `schemas/crossref/SOURCE.txt`.
+- **Check an existing copy:** `python scripts/fetch_crossref_schema.py --verify`
+- **Missing schema:** if the files are missing or altered, the schema-validation tests **fail**, with instructions, rather than being skipped. A passing run therefore always means output was validated against the real schema.
+- **Not included in this repository:** Crossref's schema repository does not state a license, so the files are downloaded (to the git-ignored `schemas/crossref/`) rather than committed. Set `CROSSREF_SCHEMA_DIR` to use a copy stored elsewhere.
 
 ## Usage
 
@@ -75,6 +106,7 @@ Schema-validation tests are skipped, with a message saying so, until the XSD has
 2. **Edit** — Open the CSV in Excel/Sheets, filter to records needing updates, add ORCIDs, fix affiliations
 3. **Convert** — Upload edited CSV (at most 500 rows) to generate Crossref XML
    - If any row has a problem, nothing is generated and every problem is listed with its spreadsheet row number
+   - On success, the message confirms how many records were written (always every row)
 4. **Submit** — Upload the XML to Crossref for DOI registration or updates
 
 ### Library
@@ -210,6 +242,8 @@ This is not a lossless Crossref round trip. The CSV carries only the fields belo
 | License | One content (version-of-record) license URL applied to every record in the file | Per-record licenses, AM/TDM licenses, free-to-read dates |
 | Not modeled | — | Funding, Crossmark/updates, relations, clinical trials, component lists, language |
 
+References, Crossmark, and relations follow their own update procedures at Crossref; see Crossref's documentation before relying on a redeposit to change or keep them.
+
 ## API Reference
 
 ### download_prefix(prefix, email=None, limit=None, sort_by='deposited') → DataFrame
@@ -257,6 +291,16 @@ Validation happens at three levels, each catching things the one before cannot:
 You can also check files with the [Crossref Metadata Parser](https://www.crossref.org/02publishers/parser.html) before submission.
 
 Spot-check a few records manually against your source data—automated transformations can propagate errors silently across hundreds of records.
+
+### Known validation limitations
+
+Input validation checks format, not authenticity:
+
+- **ORCID:** the `0000-0000-0000-000X` pattern is checked; the check digit is not.
+- **ISSN:** 7 digits plus a digit or `X` are required; the check digit is not verified.
+- **ROR:** any identifier without spaces is accepted and expanded to `https://ror.org/...`; the ROR ID format and check digits are not verified.
+- **Depositor email:** must be present, but its format is not checked.
+- **Existence:** DOIs, ORCIDs, ROR IDs, and URLs are never looked up, so a well-formed identifier can still be wrong.
 
 ## Limitations
 
