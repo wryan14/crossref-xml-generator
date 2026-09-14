@@ -802,4 +802,7 @@ def convert() -> Response:
 
 
 if __name__ == '__main__':
+    # Local development server only: debug mode enables Werkzeug's interactive
+    # debugger, which allows code execution. It binds to 127.0.0.1 by default;
+    # do not expose it on a network. Use a production WSGI server to deploy.
     app.run(debug=True)
