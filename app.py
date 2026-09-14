@@ -3,6 +3,7 @@
 import logging
 
 import pandas as pd
+import requests
 from flask import Flask, render_template_string, request, jsonify, Response
 
 from crossref_xml import SUPPORTED_RECORD_TYPE, generate_xml, download_prefix
@@ -716,6 +717,16 @@ def download() -> Response:
     except ValueError as e:
         logger.warning(f"Download failed for {prefix}: {e}")
         return jsonify({'success': False, 'message': str(e)})
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 'error'
+        logger.warning(f"Crossref API returned HTTP {status} for {prefix}: {e}")
+        return jsonify({'success': False, 'message': (
+            f'Crossref API returned HTTP {status}. Check the DOI prefix, '
+            'or wait and retry if requests are being rate limited (429).'
+        )})
+    except requests.RequestException as e:
+        logger.warning(f"Crossref API request failed for {prefix}: {e}")
+        return jsonify({'success': False, 'message': 'Could not reach the Crossref API. Please try again.'})
     except Exception as e:
         logger.error(f"Unexpected error downloading {prefix}: {e}", exc_info=True)
         return jsonify({'success': False, 'message': 'Failed to download metadata. Check the DOI prefix and try again.'})

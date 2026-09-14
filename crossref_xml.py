@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 REQUIRED_COLUMNS = ['doi', 'title', 'publication', 'authors', 'publication_date', 'resource_url']
 CROSSREF_API_BASE = 'https://api.crossref.org'
 CROSSREF_ROWS_PER_PAGE = 500
+# REST API rule: offset + rows may not exceed 10,000; only cursors page further
+CROSSREF_MAX_OFFSET_WINDOW = 10000
 
 # Application limit, not a Crossref rule: Crossref caps deposit files at 10 MB.
 # 500 records keeps a typical file well under that and failures easy to trace.
@@ -67,6 +69,12 @@ def download_prefix(prefix: str, email: str | None = None, limit: int | None = N
     # Validate parameters
     if limit is not None and limit <= 0:
         raise ValueError("Limit must be greater than 0")
+    if limit is not None and limit > CROSSREF_MAX_OFFSET_WINDOW:
+        raise ValueError(
+            f"Limit cannot exceed {CROSSREF_MAX_OFFSET_WINDOW:,} records: sorted downloads use "
+            "offset paging, which the Crossref REST API caps there. Omit the limit to download "
+            "all records."
+        )
 
     valid_sort_fields = ['deposited', 'updated', 'indexed', 'published',
                         'published-print', 'published-online', 'issued']
@@ -104,7 +112,7 @@ def download_prefix(prefix: str, email: str | None = None, limit: int | None = N
         resp.raise_for_status()
         data = resp.json()
 
-        if 'message' not in data or 'items' not in data['message']:
+        if not isinstance(data.get('message'), dict) or 'items' not in data['message']:
             raise ValueError("Invalid Crossref API response format")
 
         all_items.extend(data['message']['items'])
@@ -143,11 +151,21 @@ def download_prefix(prefix: str, email: str | None = None, limit: int | None = N
             resp.raise_for_status()
             data = resp.json()
 
-            if 'message' not in data or 'items' not in data['message']:
-                logger.warning(f"Invalid response at page {page}, stopping")
+            if not isinstance(data.get('message'), dict) or 'items' not in data['message']:
+                raise ValueError(
+                    f"Download incomplete: Crossref returned an invalid response for page "
+                    f"{page + 1} of {pages} after {len(all_items)} of {total} records. "
+                    "Try again later."
+                )
+            if not data['message']['items']:
                 break
 
             all_items.extend(data['message']['items'])
+
+        expected = min(total, limit) if limit else total
+        if len(all_items) < expected:
+            logger.warning(f"Downloaded {len(all_items)} records for prefix {prefix}, expected {expected}; "
+                           "Crossref results may have changed during the download")
 
         # Truncate to exact limit if specified
         if limit and len(all_items) > limit:
