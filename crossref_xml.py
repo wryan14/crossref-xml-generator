@@ -322,6 +322,8 @@ def _normalize_crossref_data(df: pd.DataFrame) -> pd.DataFrame:
     # anything that is not a journal article instead of mislabeling it.
     result['type'] = df['type'] if 'type' in df.columns else ''
 
+    result['abbrev_title'] = df.get('short-container-title', pd.Series([''] * len(df))).apply(_join_list)
+
     return result
 
 
@@ -407,6 +409,9 @@ def _row_errors(row: pd.Series, include_references: bool = False) -> list:
         errors.append('publication is empty')
     elif len(publication) > 255:
         errors.append('publication is longer than 255 characters')
+
+    if len(_cell(row, 'abbrev_title')) > 150:
+        errors.append('abbrev_title is longer than 150 characters')
 
     publication_date = _cell(row, 'publication_date')
     if not publication_date:
@@ -822,8 +827,10 @@ def _journal_element(row: pd.Series, include_references: bool,
     full_title = etree.SubElement(journal_metadata, 'full_title')
     full_title.text = publication
 
-    abbrev_title = etree.SubElement(journal_metadata, 'abbrev_title')
-    abbrev_title.text = publication.replace(' ', '')[:20].lower()
+    abbrev = _cell(row, 'abbrev_title')
+    if abbrev:
+        abbrev_title = etree.SubElement(journal_metadata, 'abbrev_title')
+        abbrev_title.text = abbrev
 
     for column, media_type in (('issn_print', 'print'), ('issn_electronic', 'electronic')):
         issn = _cell(row, column).replace('-', '').upper()
