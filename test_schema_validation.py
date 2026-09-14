@@ -1,12 +1,13 @@
 """XSD-backed tests: generated XML must validate against the Crossref 5.3.1 schema."""
 
+import shutil
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from conftest import generate, make_row
-from crossref_xml import generate_xml, load_schema, validate_xml
+from conftest import generate, load_fetch_script, make_row
+from crossref_xml import generate_xml, load_schema, schema_dir, validate_xml
 
 SAMPLE_DIR = Path(__file__).resolve().parent / 'sample_data'
 
@@ -56,3 +57,22 @@ def test_validate_xml_reports_schema_errors(crossref_schema):
 def test_load_schema_missing_directory_explains_fix(tmp_path):
     with pytest.raises(FileNotFoundError, match='fetch_crossref_schema.py'):
         load_schema(tmp_path)
+
+
+class TestSchemaVerification:
+
+    def test_fetched_schema_matches_pinned_checksums(self, crossref_schema):
+        fetch_script = load_fetch_script()
+        assert fetch_script.verify(schema_dir()) == []
+
+    def test_missing_files_are_reported(self, tmp_path):
+        problems = load_fetch_script().verify(tmp_path)
+        assert 'missing: crossref5.3.1.xsd' in problems
+
+    def test_altered_file_is_reported(self, tmp_path, crossref_schema):
+        fetch_script = load_fetch_script()
+        copy = tmp_path / 'schema'
+        shutil.copytree(schema_dir(), copy)
+        with open(copy / 'common5.3.1.xsd', 'a') as f:
+            f.write('<!-- modified -->')
+        assert fetch_script.verify(copy) == ['checksum mismatch: common5.3.1.xsd']

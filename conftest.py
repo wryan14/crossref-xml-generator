@@ -1,18 +1,40 @@
 """Shared pytest fixtures."""
 
+import importlib.util
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
-from crossref_xml import generate_xml, load_schema
+from crossref_xml import generate_xml, load_schema, schema_dir
+
+
+def load_fetch_script():
+    """Import scripts/fetch_crossref_schema.py (scripts/ is not a package)."""
+    path = Path(__file__).resolve().parent / 'scripts' / 'fetch_crossref_schema.py'
+    spec = importlib.util.spec_from_file_location('fetch_crossref_schema', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope='session')
 def crossref_schema():
-    """Crossref 5.3.1 XSD; tests using it skip when the schema is not downloaded."""
-    try:
-        return load_schema()
-    except FileNotFoundError as e:
-        pytest.skip(str(e))
+    """Crossref 5.3.1 XSD, verified against pinned checksums.
+
+    Schema-validation tests fail (rather than skip) when the schema is missing
+    or altered, so a green run always means output was checked against it.
+    """
+    directory = schema_dir()
+    problems = load_fetch_script().verify(directory)
+    if problems:
+        pytest.fail(
+            f"Crossref schema at {directory} is unavailable or unverified "
+            f"({'; '.join(problems[:3])}). "
+            "Run: python scripts/fetch_crossref_schema.py",
+            pytrace=False,
+        )
+    return load_schema(directory)
 
 
 def make_row(**overrides) -> dict:
