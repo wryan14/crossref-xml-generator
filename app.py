@@ -418,7 +418,7 @@ HTML_TEMPLATE = """
                         <legend>CSV Upload</legend>
                         <label for="csv-file">Metadata CSV File</label>
                         <input type="file" id="csv-file" name="csv_file" accept=".csv" required>
-                        <div class="field-hint">Required columns: doi, title, publication, authors</div>
+                        <div class="field-hint">Required columns: doi, title, publication, authors, publication_date, resource_url</div>
 
                         <div class="checkbox-group">
                             <label class="checkbox-label">

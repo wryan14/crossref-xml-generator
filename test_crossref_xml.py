@@ -171,7 +171,9 @@ class TestValidateCsv:
             'doi': ['10.1234/test'],
             'title': ['Test Title'],
             'publication': ['Test Journal'],
-            'authors': ['Chen, Maria']
+            'authors': ['Chen, Maria'],
+            'publication_date': ['2024-03'],
+            'resource_url': ['https://example.org/test'],
         })
         errors = validate_csv(df)
         assert errors == []
@@ -199,7 +201,9 @@ class TestValidateCsv:
             'doi': ['10.1234/test', None, ''],
             'title': ['Title 1', 'Title 2', 'Title 3'],
             'publication': ['Pub', 'Pub', 'Pub'],
-            'authors': ['Author', 'Author', 'Author']
+            'authors': ['Author', 'Author', 'Author'],
+            'publication_date': ['2024', '2024', '2024'],
+            'resource_url': ['https://example.org/1', 'https://example.org/2', 'https://example.org/3'],
         })
         errors = validate_csv(df)
         assert any('doi' in error.lower() for error in errors)
@@ -209,7 +213,9 @@ class TestValidateCsv:
             'doi': ['10.1234/test', '10.1234/test2'],
             'title': ['Title 1', None],
             'publication': ['Pub', 'Pub'],
-            'authors': ['Author', 'Author']
+            'authors': ['Author', 'Author'],
+            'publication_date': ['2024', '2024'],
+            'resource_url': ['https://example.org/1', 'https://example.org/2'],
         })
         errors = validate_csv(df)
         assert any('title' in error.lower() for error in errors)

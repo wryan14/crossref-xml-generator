@@ -13,6 +13,7 @@ import math
 import datetime
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -24,7 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-REQUIRED_COLUMNS = ['doi', 'title', 'publication', 'authors']
+REQUIRED_COLUMNS = ['doi', 'title', 'publication', 'authors', 'publication_date', 'resource_url']
 CROSSREF_API_BASE = 'https://api.crossref.org'
 CROSSREF_ROWS_PER_PAGE = 500
 
@@ -283,8 +284,115 @@ def _normalize_crossref_data(df: pd.DataFrame) -> pd.DataFrame:
 # Validation Functions
 # =============================================================================
 
+DOI_PATTERN = re.compile(r'10\.[0-9]{4,9}/.{1,200}')
+DATE_PATTERN = re.compile(r'(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?')
+ISSN_PATTERN = re.compile(r'\d{4}-?\d{3}[\dXx]')
+MAX_REPORTED_ERRORS = 25
+
+
+def _clean(value) -> str:
+    """Normalize a CSV cell to a stripped string ('' for missing values).
+
+    pandas reads numeric columns containing blanks as float, so 2024 arrives
+    as 2024.0; integer-valued floats are rendered without the decimal part.
+    """
+    if value is None:
+        return ''
+    if isinstance(value, float):
+        if math.isnan(value):
+            return ''
+        if value.is_integer():
+            return str(int(value))
+    return str(value).strip()
+
+
+def _cell(row: pd.Series, column: str) -> str:
+    """Return a normalized cell value, or '' when the column is absent."""
+    return _clean(row[column]) if column in row else ''
+
+
+def _is_url(value: str) -> bool:
+    """Check for an absolute http(s)/ftp URL, as the Crossref schema requires."""
+    if re.search(r'\s', value):
+        return False
+    parsed = urlparse(value)
+    return parsed.scheme.lower() in ('http', 'https', 'ftp') and bool(parsed.netloc)
+
+
+def _parse_date(value: str) -> tuple[str, str | None, str | None]:
+    """Split YYYY, YYYY-MM, or YYYY-MM-DD into zero-padded (year, month, day).
+
+    Raises:
+        ValueError: If the value is not a real calendar date in that format
+    """
+    match = DATE_PATTERN.fullmatch(value)
+    if not match:
+        raise ValueError(f"publication_date '{value}' must be YYYY, YYYY-MM, or YYYY-MM-DD")
+    year, month, day = match.groups()
+    if not 1400 <= int(year) <= 2200:
+        raise ValueError(f"publication_date '{value}' has a year outside 1400-2200")
+    try:
+        datetime.date(int(year), int(month or 1), int(day or 1))
+    except ValueError:
+        raise ValueError(f"publication_date '{value}' is not a valid calendar date") from None
+    return year, month.zfill(2) if month else None, day.zfill(2) if day else None
+
+
+def _row_errors(row: pd.Series) -> list:
+    """Return problems with a single record that would produce a bad deposit."""
+    errors = []
+
+    doi = _cell(row, 'doi')
+    if not doi:
+        errors.append('doi is empty')
+    elif not DOI_PATTERN.fullmatch(doi):
+        errors.append(f"doi '{doi}' must be a bare DOI like 10.1234/abc "
+                      "(no https://doi.org/ prefix)")
+
+    if not _cell(row, 'title'):
+        errors.append('title is empty')
+
+    publication = _cell(row, 'publication')
+    if not publication:
+        errors.append('publication is empty')
+    elif len(publication) > 255:
+        errors.append('publication is longer than 255 characters')
+
+    publication_date = _cell(row, 'publication_date')
+    if not publication_date:
+        errors.append('publication_date is empty (Crossref requires one for journal articles)')
+    else:
+        try:
+            _parse_date(publication_date)
+        except ValueError as e:
+            errors.append(str(e))
+
+    resource_url = _cell(row, 'resource_url')
+    if not resource_url:
+        errors.append('resource_url is empty (Crossref requires a landing page URL)')
+    elif not _is_url(resource_url):
+        errors.append(f"resource_url '{resource_url}' is not an absolute http(s) URL")
+
+    pdf_url = _cell(row, 'pdf_url')
+    if pdf_url and not _is_url(pdf_url):
+        errors.append(f"pdf_url '{pdf_url}' is not an absolute http(s) URL")
+
+    for column in ('issn_print', 'issn_electronic'):
+        issn = _cell(row, column)
+        if issn and not ISSN_PATTERN.fullmatch(issn):
+            errors.append(f"{column} '{issn}' is not a valid ISSN (NNNN-NNNN)")
+
+    pages = _cell(row, 'pages')
+    if pages and not pages.partition('-')[0].strip():
+        errors.append(f"pages '{pages}' must start with a first page")
+
+    return errors
+
+
 def validate_csv(df: pd.DataFrame) -> list:
-    """Check DataFrame for required columns and basic data validity.
+    """Check DataFrame for required columns and per-record data validity.
+
+    Row numbers in messages match spreadsheet rows (header is row 1).
 
     Args:
         df: DataFrame to validate
@@ -299,13 +407,19 @@ def validate_csv(df: pd.DataFrame) -> list:
         errors.append(f"Missing required columns: {', '.join(missing)}")
         return errors
 
-    empty_dois = df['doi'].isna().sum()
-    if empty_dois > 0:
-        errors.append(f"{empty_dois} rows have empty DOI values")
+    first_seen = {}
+    for position, (_, row) in enumerate(df.iterrows()):
+        line = position + 2
+        doi = _cell(row, 'doi')
+        label = f"Row {line} ({doi})" if doi else f"Row {line}"
+        errors.extend(f"{label}: {message}" for message in _row_errors(row))
 
-    empty_titles = df['title'].isna().sum()
-    if empty_titles > 0:
-        errors.append(f"{empty_titles} rows have empty title values")
+        if doi:
+            key = doi.lower()  # DOIs are case-insensitive
+            if key in first_seen:
+                errors.append(f"{label}: duplicate DOI (first used in row {first_seen[key]})")
+            else:
+                first_seen[key] = line
 
     return errors
 
@@ -545,25 +659,151 @@ def references_to_xml(references_str: str) -> etree.Element:
 # XML Generation
 # =============================================================================
 
+def _add_publication_date(parent: etree.Element, value: str) -> None:
+    """Append a <publication_date> built from a validated date string."""
+    year, month, day = _parse_date(value)
+    publication_date = etree.SubElement(parent, 'publication_date', media_type='online')
+    if month:
+        etree.SubElement(publication_date, 'month').text = month
+    if day:
+        etree.SubElement(publication_date, 'day').text = day
+    etree.SubElement(publication_date, 'year').text = year
+
+
+def _journal_element(row: pd.Series, include_references: bool,
+                     license_url: str | None) -> etree.Element:
+    """Build one <journal> element from a validated CSV row."""
+    journal = etree.Element('journal')
+
+    journal_metadata = etree.SubElement(journal, 'journal_metadata')
+
+    publication = _cell(row, 'publication')
+    full_title = etree.SubElement(journal_metadata, 'full_title')
+    full_title.text = publication
+
+    abbrev_title = etree.SubElement(journal_metadata, 'abbrev_title')
+    abbrev_title.text = publication.replace(' ', '')[:20].lower()
+
+    for column, media_type in (('issn_print', 'print'), ('issn_electronic', 'electronic')):
+        issn = _cell(row, column).replace('-', '').upper()
+        if issn:
+            issn_elem = etree.SubElement(journal_metadata, 'issn', media_type=media_type)
+            issn_elem.text = f'{issn[:4]}-{issn[4:]}'
+
+    publication_date = _cell(row, 'publication_date')
+
+    journal_issue = etree.SubElement(journal, 'journal_issue')
+    _add_publication_date(journal_issue, publication_date)
+
+    volume = _cell(row, 'volume')
+    if volume:
+        volume_elem = etree.SubElement(journal_issue, 'journal_volume')
+        volume_number = etree.SubElement(volume_elem, 'volume')
+        volume_number.text = volume
+
+    issue = _cell(row, 'issue')
+    if issue:
+        issue_elem = etree.SubElement(journal_issue, 'issue')
+        issue_elem.text = issue
+
+    journal_article = etree.SubElement(journal, 'journal_article', publication_type='full_text')
+
+    titles = etree.SubElement(journal_article, 'titles')
+    title = etree.SubElement(titles, 'title')
+    title.text = _cell(row, 'title')
+
+    contributors_elem = contributors_to_xml(row.get('authors', ''))
+    if contributors_elem is not None:
+        journal_article.append(contributors_elem)
+
+    abstract_text = re.sub(r'</?jats:p>', '', _cell(row, 'abstract'))
+    if abstract_text:
+        abstract = etree.SubElement(journal_article, '{http://www.ncbi.nlm.nih.gov/JATS1}abstract')
+        abstract_p = etree.SubElement(abstract, '{http://www.ncbi.nlm.nih.gov/JATS1}p')
+        abstract_p.text = abstract_text
+
+    _add_publication_date(journal_article, publication_date)
+
+    pages = _cell(row, 'pages')
+    if pages:
+        pages_elem = etree.SubElement(journal_article, 'pages')
+        first, _, last = pages.partition('-')
+        first_page = etree.SubElement(pages_elem, 'first_page')
+        first_page.text = first.strip()
+        if last.strip():
+            last_page = etree.SubElement(pages_elem, 'last_page')
+            last_page.text = last.strip()
+
+    if license_url:
+        ai_program = etree.SubElement(
+            journal_article,
+            '{http://www.crossref.org/AccessIndicators.xsd}program',
+            name='AccessIndicators'
+        )
+        license_ref = etree.SubElement(
+            ai_program,
+            '{http://www.crossref.org/AccessIndicators.xsd}license_ref',
+            applies_to='vor'
+        )
+        license_ref.text = license_url
+
+    doi_data = etree.SubElement(journal_article, 'doi_data')
+
+    doi_elem = etree.SubElement(doi_data, 'doi')
+    doi_elem.text = _cell(row, 'doi')
+
+    resource = etree.SubElement(doi_data, 'resource')
+    resource.text = _cell(row, 'resource_url')
+
+    pdf_url = _cell(row, 'pdf_url')
+    if pdf_url:
+        crawler_collection = etree.SubElement(doi_data, 'collection', property='crawler-based')
+        tdm_item = etree.SubElement(crawler_collection, 'item', crawler='iParadigms')
+        tdm_resource = etree.SubElement(tdm_item, 'resource')
+        tdm_resource.text = pdf_url
+
+        text_mining_collection = etree.SubElement(doi_data, 'collection', property='text-mining')
+        text_mining_item = etree.SubElement(text_mining_collection, 'item')
+        text_mining_resource = etree.SubElement(
+            text_mining_item, 'resource',
+            content_version='vor',
+            mime_type='application/pdf'
+        )
+        text_mining_resource.text = pdf_url
+
+    if include_references and 'references' in row:
+        citation_list = references_to_xml(row.get('references'))
+        if citation_list is not None:
+            journal_article.append(citation_list)
+
+    return journal
+
+
 def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
                  registrant: str, include_references: bool = False,
                  license_url: str | None = None) -> str:
     """Generate Crossref 5.3.1 XML from DataFrame.
 
+    Every row becomes exactly one record, or the whole call fails: rows are
+    never silently skipped or truncated. Passing validation here does not
+    guarantee Crossref will accept the deposit; see validate_xml.
+
     Args:
-        data: DataFrame with required columns: doi, title, publication, authors
+        data: DataFrame with the columns listed in REQUIRED_COLUMNS
         depositor_name: Name of the depositing organization
         depositor_email: Contact email for the depositor
         registrant: Registrant identifier
         include_references: When True, includes references column as citations
-        license_url: Optional license URL for metadata. If None, no license element is added.
+        license_url: Optional license URL for the article content (version of
+            record), emitted as <ai:license_ref applies_to="vor">. If None or
+            empty, no license element is added.
 
     Returns:
         Crossref 5.3.1 XML document as string
 
     Raises:
-        ValueError: When required columns are missing, or when data has more
-            than MAX_RECORDS_PER_FILE rows (records are never silently dropped)
+        ValueError: When required columns or values are missing or invalid, or
+            when data has more than MAX_RECORDS_PER_FILE rows
     """
     if len(data) > MAX_RECORDS_PER_FILE:
         raise ValueError(
@@ -572,12 +812,23 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
             f"files of {MAX_RECORDS_PER_FILE} rows or fewer and convert each one."
         )
 
+    for name, value in (('depositor_name', depositor_name),
+                        ('depositor_email', depositor_email),
+                        ('registrant', registrant)):
+        if not _clean(value):
+            raise ValueError(f"{name} is required")
+
+    license_url = _clean(license_url) or None
+    if license_url and not _is_url(license_url):
+        raise ValueError(f"license_url '{license_url}' is not an absolute http(s) URL")
+
     errors = validate_csv(data)
     if errors:
-        raise ValueError('; '.join(errors))
-
-    data = data[data['doi'].notna() & (data['doi'] != '')]
-    data = data[data['title'].notna() & (data['title'] != '')]
+        shown = errors[:MAX_REPORTED_ERRORS]
+        message = '; '.join(shown)
+        if len(errors) > len(shown):
+            message += f'; ... and {len(errors) - len(shown)} more'
+        raise ValueError(message)
 
     root = etree.Element(
         '{http://www.crossref.org/schema/5.3.1}doi_batch',
@@ -605,157 +856,20 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
 
     depositor_elem = etree.SubElement(head, 'depositor')
     depositor_name_elem = etree.SubElement(depositor_elem, 'depositor_name')
-    depositor_name_elem.text = depositor_name
+    depositor_name_elem.text = depositor_name.strip()
     email_elem = etree.SubElement(depositor_elem, 'email_address')
-    email_elem.text = depositor_email
+    email_elem.text = depositor_email.strip()
 
     registrant_elem = etree.SubElement(head, 'registrant')
-    registrant_elem.text = registrant
+    registrant_elem.text = registrant.strip()
 
     body = etree.SubElement(root, 'body')
 
-    for _, row in data.iterrows():
-        journal = etree.SubElement(body, 'journal')
-
-        journal_metadata = etree.SubElement(journal, 'journal_metadata')
-
-        full_title = etree.SubElement(journal_metadata, 'full_title')
-        full_title.text = str(row['publication']) if not pd.isna(row['publication']) else ''
-
-        abbrev_title = etree.SubElement(journal_metadata, 'abbrev_title')
-        pub_title = str(row['publication']) if not pd.isna(row['publication']) else ''
-        abbrev_title.text = pub_title.replace(' ', '')[:20].lower()
-
-        if 'issn_print' in row and not pd.isna(row.get('issn_print')) and row.get('issn_print'):
-            issn_print = str(row['issn_print']).replace('-', '').strip()
-            if len(issn_print) == 8:
-                issn_elem = etree.SubElement(journal_metadata, 'issn', media_type='print')
-                issn_elem.text = f'{issn_print[:4]}-{issn_print[4:]}'
-
-        if 'issn_electronic' in row and not pd.isna(row.get('issn_electronic')) and row.get('issn_electronic'):
-            issn_electronic = str(row['issn_electronic']).replace('-', '').strip()
-            if len(issn_electronic) == 8:
-                issn_elem = etree.SubElement(journal_metadata, 'issn', media_type='electronic')
-                issn_elem.text = f'{issn_electronic[:4]}-{issn_electronic[4:]}'
-
-        if 'publication_date' in row and not pd.isna(row.get('publication_date')) and row.get('publication_date'):
-            journal_issue = etree.SubElement(journal, 'journal_issue')
-
-            pub_date = str(row['publication_date'])
-            date_parts = pub_date.split('-')
-
-            publication_date = etree.SubElement(journal_issue, 'publication_date', media_type='online')
-            if len(date_parts) >= 2 and date_parts[1]:
-                month = etree.SubElement(publication_date, 'month')
-                month.text = date_parts[1]
-            if len(date_parts) >= 3 and date_parts[2]:
-                day = etree.SubElement(publication_date, 'day')
-                day.text = date_parts[2]
-            if date_parts[0]:
-                year = etree.SubElement(publication_date, 'year')
-                year.text = date_parts[0]
-
-            if 'volume' in row and not pd.isna(row.get('volume')) and row['volume']:
-                volume_elem = etree.SubElement(journal_issue, 'journal_volume')
-                volume_number = etree.SubElement(volume_elem, 'volume')
-                vol_val = row['volume']
-                if isinstance(vol_val, float) and vol_val.is_integer():
-                    vol_val = int(vol_val)
-                volume_number.text = str(vol_val)
-
-            if 'issue' in row and not pd.isna(row.get('issue')) and row['issue']:
-                issue_elem = etree.SubElement(journal_issue, 'issue')
-                issue_val = row['issue']
-                if isinstance(issue_val, float) and issue_val.is_integer():
-                    issue_val = int(issue_val)
-                issue_elem.text = str(issue_val)
-
-        journal_article = etree.SubElement(journal, 'journal_article', publication_type='full_text')
-
-        titles = etree.SubElement(journal_article, 'titles')
-        title = etree.SubElement(titles, 'title')
-        title.text = str(row['title']) if not pd.isna(row['title']) else ''
-
-        contributors_elem = contributors_to_xml(row.get('authors', ''))
-        if contributors_elem is not None:
-            journal_article.append(contributors_elem)
-
-        if 'abstract' in row and not pd.isna(row.get('abstract')) and row.get('abstract'):
-            abstract_text = str(row['abstract'])
-            abstract_text = re.sub(r'</?jats:p>', '', abstract_text)
-
-            abstract = etree.SubElement(journal_article, '{http://www.ncbi.nlm.nih.gov/JATS1}abstract')
-            abstract_p = etree.SubElement(abstract, '{http://www.ncbi.nlm.nih.gov/JATS1}p')
-            abstract_p.text = abstract_text
-
-        if 'publication_date' in row and not pd.isna(row.get('publication_date')) and row.get('publication_date'):
-            pub_date = str(row['publication_date'])
-            date_parts = pub_date.split('-')
-
-            publication_date = etree.SubElement(journal_article, 'publication_date', media_type='online')
-            if len(date_parts) >= 2 and date_parts[1]:
-                month = etree.SubElement(publication_date, 'month')
-                month.text = date_parts[1]
-            if len(date_parts) >= 3 and date_parts[2]:
-                day = etree.SubElement(publication_date, 'day')
-                day.text = date_parts[2]
-            if date_parts[0]:
-                year = etree.SubElement(publication_date, 'year')
-                year.text = date_parts[0]
-
-        if 'pages' in row and not pd.isna(row.get('pages')) and row['pages']:
-            pages_elem = etree.SubElement(journal_article, 'pages')
-            page_str = str(row['pages'])
-            if '-' in page_str:
-                first_page = etree.SubElement(pages_elem, 'first_page')
-                first_page.text = page_str.split('-')[0]
-                last_page = etree.SubElement(pages_elem, 'last_page')
-                last_page.text = page_str.split('-')[1]
-            else:
-                first_page = etree.SubElement(pages_elem, 'first_page')
-                first_page.text = page_str
-
-        # Add license element if provided
-        if license_url:
-            ai_program = etree.SubElement(
-                journal_article,
-                '{http://www.crossref.org/AccessIndicators.xsd}program',
-                name='AccessIndicators'
-            )
-            license_ref = etree.SubElement(
-                ai_program,
-                '{http://www.crossref.org/AccessIndicators.xsd}license_ref',
-                applies_to='vor'
-            )
-            license_ref.text = license_url
-
-        doi_data = etree.SubElement(journal_article, 'doi_data')
-
-        doi_elem = etree.SubElement(doi_data, 'doi')
-        doi_elem.text = str(row['doi']) if not pd.isna(row['doi']) else ''
-
-        resource = etree.SubElement(doi_data, 'resource')
-        resource.text = str(row['resource_url']) if 'resource_url' in row and not pd.isna(row.get('resource_url')) else ''
-
-        if 'pdf_url' in row and not pd.isna(row.get('pdf_url')) and row.get('pdf_url'):
-            crawler_collection = etree.SubElement(doi_data, 'collection', property='crawler-based')
-            tdm_item = etree.SubElement(crawler_collection, 'item', crawler='iParadigms')
-            tdm_resource = etree.SubElement(tdm_item, 'resource')
-            tdm_resource.text = str(row['pdf_url'])
-
-            text_mining_collection = etree.SubElement(doi_data, 'collection', property='text-mining')
-            text_mining_item = etree.SubElement(text_mining_collection, 'item')
-            text_mining_resource = etree.SubElement(
-                text_mining_item, 'resource',
-                content_version='vor',
-                mime_type='application/pdf'
-            )
-            text_mining_resource.text = str(row['pdf_url'])
-
-        if include_references and 'references' in row:
-            citation_list = references_to_xml(row.get('references'))
-            if citation_list is not None:
-                journal_article.append(citation_list)
+    for position, (_, row) in enumerate(data.iterrows()):
+        try:
+            body.append(_journal_element(row, include_references, license_url))
+        except ValueError as e:
+            raise ValueError(f"Row {position + 2}: {e}") from e
 
     xml_bytes = etree.tostring(root, pretty_print=True, encoding='UTF-8', xml_declaration=True)
     xml_str = xml_bytes.decode('utf-8')
