@@ -29,6 +29,12 @@ def post_csv(client, rows: list[dict], **form):
     return client.post('/convert', data=data, content_type='multipart/form-data').get_json()
 
 
+def test_workflow_warns_that_redeposit_is_not_lossless(client):
+    page = client.get('/').get_data(as_text=True)
+    assert 'Not a lossless round trip.' in page
+    assert '#supported-and-omitted-metadata' in page
+
+
 class TestLicenseLabel:
     """license_ref applies_to="vor" licenses the article content, not the metadata."""
 

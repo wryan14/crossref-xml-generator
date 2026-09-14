@@ -272,6 +272,17 @@ HTML_TEMPLATE = """
             margin-bottom: 8px;
         }
 
+        .workflow-note {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+            font-size: 14px;
+        }
+
+        .workflow-note a {
+            color: var(--text-primary);
+        }
+
         footer {
             margin-top: 48px;
             padding-top: 24px;
@@ -320,6 +331,12 @@ HTML_TEMPLATE = """
                 <li><strong>Edit</strong> - Filter and modify records in your spreadsheet (add ORCIDs, fix affiliations)</li>
                 <li><strong>Convert</strong> - Generate Crossref XML from your edited CSV for submission</li>
             </ol>
+            <p class="workflow-note">
+                <strong>Not a lossless round trip.</strong> Crossref replaces a record's metadata when you
+                redeposit it, and this tool only carries the fields in the CSV. Metadata it does not preserve,
+                such as funding or editors, can be removed from Crossref.
+                <a href="https://github.com/wryan14/crossref-xml-generator#supported-and-omitted-metadata" target="_blank">See what is supported</a>
+            </p>
         </div>
 
         <div class="tabs">
