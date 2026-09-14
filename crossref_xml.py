@@ -184,15 +184,29 @@ def _extract_date(date_field: dict | None) -> str:
     return ''
 
 
+def _notation_safe(value: str, context: str) -> str:
+    """Replace characters that would break bracket notation, logging any change."""
+    safe = value.replace(';', ',').replace('[', '(').replace(']', ')')
+    if safe != value:
+        logger.warning(f"{context}: replaced ';' or brackets in '{value}' to keep author notation parseable")
+    return safe
+
+
 def _extract_authors(author_list: list[dict] | None) -> str:
-    """Format authors with ORCID, ORG, and ROR bracket notation."""
+    """Format authors with ORCID, ORG, and ROR bracket notation.
+
+    ORG[] and ROR[] are positional: when only some affiliations have a ROR
+    ID, empty slots keep each ID attached to the right institution.
+    """
     if not author_list or not isinstance(author_list, list):
         return ''
 
     formatted = []
     for auth in author_list:
-        if 'family' in auth:
-            name = f"{auth['family']}, {auth.get('given', '')}"
+        if auth.get('family'):
+            family = _notation_safe(auth['family'], 'author')
+            given = _notation_safe(auth.get('given') or '', 'author')
+            name = f"{family}, {given}".strip()
 
             if auth.get('ORCID'):
                 name += f" ORCID[{auth['ORCID']}]"
@@ -200,20 +214,26 @@ def _extract_authors(author_list: list[dict] | None) -> str:
             affiliations = []
             ror_ids = []
             for aff in auth.get('affiliation', []):
-                if aff.get('name'):
-                    affiliations.append(aff['name'])
-                for id_obj in aff.get('id', []):
-                    if id_obj.get('id-type', '').upper() == 'ROR':
-                        ror_ids.append(id_obj['id'])
+                aff_name = _notation_safe(aff.get('name') or '', f'affiliation of {family}')
+                ror_id = next((id_obj.get('id', '') for id_obj in aff.get('id', [])
+                               if id_obj.get('id-type', '').upper() == 'ROR'), '')
+                if aff_name or ror_id:
+                    affiliations.append(aff_name)
+                    ror_ids.append(ror_id)
 
-            if affiliations:
+            if any(affiliations):
                 name += f" ORG[{'; '.join(affiliations)}]"
-            if ror_ids:
+            if any(ror_ids):
                 name += f" ROR[{'; '.join(ror_ids)}]"
 
             formatted.append(name)
         elif auth.get('name'):
-            formatted.append(f"ORG[{auth['name']}]")
+            if auth.get('affiliation') or auth.get('ORCID'):
+                logger.warning(f"Organization author '{auth['name']}': affiliations/ORCID "
+                               "omitted (not supported for organizations in schema 5.3.1)")
+            formatted.append(f"ORG[{_notation_safe(auth['name'], 'organization author')}]")
+        else:
+            logger.warning(f"Author without family name or organization name omitted: {auth}")
 
     return '; '.join(formatted)
 
@@ -386,6 +406,11 @@ def _row_errors(row: pd.Series) -> list:
     if pages and not pages.partition('-')[0].strip():
         errors.append(f"pages '{pages}' must start with a first page")
 
+    try:
+        parse_contributors(_cell(row, 'authors'))
+    except ValueError as e:
+        errors.append(str(e))
+
     return errors
 
 
@@ -473,56 +498,112 @@ def validate_xml(xml: str | bytes, schema: etree.XMLSchema | None = None) -> lis
 # Contributor Parsing
 # =============================================================================
 
+ORCID_PATTERN = re.compile(r'(?:(?:https?://)?orcid\.org/)?(\d{4}-\d{4}-\d{4}-\d{3}[\dX])', re.IGNORECASE)
+BRACKET_PATTERN = re.compile(r'(ORCID|ORG|ROR)\[([^\]]*)\]')
+
+
+def _normalize_ror(value: str) -> str:
+    """Expand 'abc123' or 'ror.org/abc123' to 'https://ror.org/abc123'."""
+    value = re.sub(r'^https?://', '', value)
+    if value.startswith('ror.org/'):
+        value = value[len('ror.org/'):]
+    return f'https://ror.org/{value}'
+
+
 def parse_contributors(authors_str: str) -> list:
     """Parse author string with bracket notation into structured contributor data.
+
+    Each semicolon-delimited entry is one of:
+    - a person: ``Surname, Given`` (or ``Surname,`` when there is no given
+      name) with optional ORCID[], ORG[], and ROR[] brackets
+    - an organization: ``ORG[Name]`` with no person name
+
+    ORG[] and ROR[] lists pair by position; leave a slot empty to skip one,
+    e.g. ``ORG[Dept A; Dept B] ROR[; https://ror.org/xyz]``.
 
     Args:
         authors_str: Semicolon-delimited author string with optional ORCID[], ORG[], ROR[] brackets
 
     Returns:
-        List of contributor dicts with keys: surname, given_name, orcid, affiliations, rors
+        List of contributor dicts with keys: surname, given_name, orcid,
+        affiliations, rors, organization (None for people)
+
+    Raises:
+        ValueError: If an entry cannot be represented without losing data
     """
-    if not authors_str or pd.isna(authors_str):
+    if authors_str is None or (not isinstance(authors_str, str) and pd.isna(authors_str)):
         return []
 
     contributors = []
-    author_parts = re.split(r';(?![^\[]*\])', authors_str)
+    author_parts = re.split(r';(?![^\[]*\])', str(authors_str))
 
     for part in author_parts:
         part = part.strip()
         if not part:
             continue
 
+        brackets = {'ORCID': [], 'ORG': [], 'ROR': []}
+        for tag, content in BRACKET_PATTERN.findall(part):
+            brackets[tag].append(content)
+        name = BRACKET_PATTERN.sub('', part).strip()
+
+        if '[' in name or ']' in name:
+            raise ValueError(f"author '{part}' has unrecognized bracket notation "
+                             "(supported: ORCID[], ORG[], ROR[])")
+
         contributor = {
             'surname': None,
             'given_name': None,
             'orcid': None,
             'affiliations': [],
-            'rors': []
+            'rors': [],
+            'organization': None,
         }
 
-        orcid_match = re.search(r'ORCID\[https?://([^\]]+)\]', part)
-        if orcid_match:
-            contributor['orcid'] = 'https://' + orcid_match.group(1)
-            part = re.sub(r'ORCID\[[^\]]+\]', '', part)
+        if not name:
+            if len(brackets['ORG']) == 1 and not brackets['ORCID'] and not brackets['ROR']:
+                organization = brackets['ORG'][0].strip()
+                if organization:
+                    contributor['organization'] = organization
+                    contributors.append(contributor)
+                    continue
+            raise ValueError(f"author '{part}' has no person name; use 'Surname, Given' for a "
+                             "person or ORG[Name] alone for an organization (Crossref 5.3.1 "
+                             "organization contributors cannot carry ORCID or ROR)")
 
-        org_match = re.search(r'ORG\[([^\]]+)\]', part)
-        if org_match:
-            orgs = org_match.group(1).split('; ')
-            contributor['affiliations'] = [o.strip() for o in orgs if o.strip()]
-            part = re.sub(r'ORG\[[^\]]+\]', '', part)
+        if ',' not in name:
+            raise ValueError(f"author '{name}' must be 'Surname, Given' "
+                             "(or 'Surname,' when there is no given name)")
+        surname, _, given_name = name.partition(',')
+        if not surname.strip():
+            raise ValueError(f"author '{part}' has an empty surname")
+        contributor['surname'] = surname.strip()
+        contributor['given_name'] = given_name.strip() or None
+        for label, value in (('surname', contributor['surname']), ('given name', contributor['given_name'])):
+            if value and len(value) > 60:
+                raise ValueError(f"author '{name}' {label} is longer than Crossref's 60-character limit")
 
-        ror_match = re.search(r'ROR\[([^\]]+)\]', part)
-        if ror_match:
-            rors = ror_match.group(1).split('; ')
-            contributor['rors'] = [r.strip() for r in rors if r.strip()]
-            part = re.sub(r'ROR\[[^\]]+\]', '', part)
+        if len(brackets['ORCID']) > 1:
+            raise ValueError(f"author '{name}' has more than one ORCID")
+        if brackets['ORCID']:
+            orcid_match = ORCID_PATTERN.fullmatch(brackets['ORCID'][0].strip())
+            if not orcid_match:
+                raise ValueError(f"author '{name}' has an invalid ORCID "
+                                 f"'{brackets['ORCID'][0]}' (expected https://orcid.org/0000-0000-0000-0000)")
+            contributor['orcid'] = 'https://orcid.org/' + orcid_match.group(1).upper()
 
-        name_match = re.match(r'([^,]+),\s*(.+)', part.strip())
-        if name_match:
-            contributor['surname'] = name_match.group(1).strip()
-            contributor['given_name'] = name_match.group(2).strip()
-            contributors.append(contributor)
+        # Keep empty slots so ORG and ROR entries stay aligned by position
+        contributor['affiliations'] = [o.strip() for group in brackets['ORG'] for o in group.split(';')]
+        contributor['rors'] = [r.strip() for group in brackets['ROR'] for r in group.split(';')]
+        for ror in contributor['rors']:
+            if re.search(r'\s', ror):
+                raise ValueError(f"author '{name}' has an invalid ROR '{ror}'")
+        if not any(contributor['affiliations']):
+            contributor['affiliations'] = []
+        if not any(contributor['rors']):
+            contributor['rors'] = []
+
+        contributors.append(contributor)
 
     return contributors
 
@@ -534,7 +615,10 @@ def contributors_to_xml(authors_str: str) -> etree.Element:
         authors_str: Semicolon-delimited author string with optional bracket notation
 
     Returns:
-        Crossref <contributors> element, or None if no valid contributors
+        Crossref <contributors> element, or None if no contributors
+
+    Raises:
+        ValueError: If an entry cannot be parsed (see parse_contributors)
     """
     contributors = parse_contributors(authors_str)
     if not contributors:
@@ -543,45 +627,53 @@ def contributors_to_xml(authors_str: str) -> etree.Element:
     contributors_elem = etree.Element('contributors')
 
     for i, contrib in enumerate(contributors):
-        if not contrib['surname']:
-            continue
-
         sequence = 'first' if i == 0 else 'additional'
+
+        if contrib['organization']:
+            org_elem = etree.SubElement(contributors_elem, 'organization')
+            org_elem.set('contributor_role', 'author')
+            org_elem.set('sequence', sequence)
+            org_elem.text = contrib['organization']
+            continue
 
         person_elem = etree.SubElement(contributors_elem, 'person_name')
         person_elem.set('contributor_role', 'author')
         person_elem.set('sequence', sequence)
 
-        given_elem = etree.SubElement(person_elem, 'given_name')
-        given_elem.text = contrib['given_name']
+        if contrib['given_name']:
+            given_elem = etree.SubElement(person_elem, 'given_name')
+            given_elem.text = contrib['given_name']
 
         surname_elem = etree.SubElement(person_elem, 'surname')
         surname_elem.text = contrib['surname']
 
-        if contrib['affiliations']:
+        slots = max(len(contrib['affiliations']), len(contrib['rors']))
+        institutions = []
+        for idx in range(slots):
+            affiliation = contrib['affiliations'][idx] if idx < len(contrib['affiliations']) else ''
+            ror_id = contrib['rors'][idx] if idx < len(contrib['rors']) else ''
+            if affiliation or ror_id:
+                institutions.append((affiliation, ror_id))
+
+        if institutions:
             affiliations_elem = etree.SubElement(person_elem, 'affiliations')
 
-            for aff_idx, affiliation in enumerate(contrib['affiliations']):
+            for affiliation, ror_id in institutions:
                 institution_elem = etree.SubElement(affiliations_elem, 'institution')
 
-                inst_name_elem = etree.SubElement(institution_elem, 'institution_name')
-                inst_name_elem.text = affiliation
+                if affiliation:
+                    inst_name_elem = etree.SubElement(institution_elem, 'institution_name')
+                    inst_name_elem.text = affiliation
 
-                if aff_idx < len(contrib['rors']) and contrib['rors'][aff_idx]:
-                    ror_id = contrib['rors'][aff_idx]
-                    if not ror_id.startswith('https://ror.org/'):
-                        if ror_id.startswith('ror.org/'):
-                            ror_id = 'https://' + ror_id
-                        else:
-                            ror_id = 'https://ror.org/' + ror_id
+                if ror_id:
                     inst_id_elem = etree.SubElement(institution_elem, 'institution_id', type='ror')
-                    inst_id_elem.text = ror_id
+                    inst_id_elem.text = _normalize_ror(ror_id)
 
         if contrib['orcid']:
             orcid_elem = etree.SubElement(person_elem, 'ORCID')
             orcid_elem.text = contrib['orcid']
 
-    return contributors_elem if len(contributors_elem) > 0 else None
+    return contributors_elem
 
 
 # =============================================================================
