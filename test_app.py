@@ -29,6 +29,21 @@ def post_csv(client, rows: list[dict], **form):
     return client.post('/convert', data=data, content_type='multipart/form-data').get_json()
 
 
+class TestLicenseLabel:
+    """license_ref applies_to="vor" licenses the article content, not the metadata."""
+
+    def test_license_is_emitted_for_version_of_record(self, client):
+        result = post_csv(client, [make_row()], license_url='https://creativecommons.org/licenses/by/4.0/')
+        assert 'applies_to="vor">https://creativecommons.org/licenses/by/4.0/</ai:license_ref>' in result['xml']
+
+    def test_ui_does_not_describe_it_as_a_metadata_license(self, client):
+        page = client.get('/').get_data(as_text=True)
+        assert 'Metadata License' not in page
+        assert 'Applies to metadata only' not in page
+        assert 'Article Content License' in page
+        assert 'version of record' in page
+
+
 class TestConvertRecordCounts:
 
     def test_reports_emitted_and_requested_counts(self, client):

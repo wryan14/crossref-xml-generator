@@ -428,7 +428,7 @@ HTML_TEMPLATE = """
                             </label>
                         </div>
 
-                        <label for="license-url" style="margin-top: 20px; margin-bottom: 4px;">Metadata License</label>
+                        <label for="license-url" style="margin-top: 20px; margin-bottom: 4px;">Article Content License</label>
                         <select id="license-url" name="license_url">
                             <option value="">None</option>
                             <option value="https://creativecommons.org/publicdomain/zero/1.0/">CC0 1.0 Universal (Public Domain)</option>
@@ -437,7 +437,7 @@ HTML_TEMPLATE = """
                             <option value="https://creativecommons.org/licenses/by-nc/4.0/">CC BY-NC 4.0 (Attribution-NonCommercial)</option>
                             <option value="https://creativecommons.org/licenses/by-nd/4.0/">CC BY-ND 4.0 (Attribution-NoDerivatives)</option>
                         </select>
-                        <div class="field-hint" style="margin-top: 4px;">Optional. Applies to metadata only.</div>
+                        <div class="field-hint" style="margin-top: 4px;">Optional. The license under which the published article (version of record) is available, added to every record. It does not license the metadata.</div>
                     </fieldset>
 
                     <button type="submit">Generate XML</button>
