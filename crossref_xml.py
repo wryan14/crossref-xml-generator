@@ -358,7 +358,7 @@ def _parse_date(value: str) -> tuple[str, str | None, str | None]:
     return year, month.zfill(2) if month else None, day.zfill(2) if day else None
 
 
-def _row_errors(row: pd.Series) -> list:
+def _row_errors(row: pd.Series, include_references: bool = False) -> list:
     """Return problems with a single record that would produce a bad deposit."""
     errors = []
 
@@ -411,16 +411,26 @@ def _row_errors(row: pd.Series) -> list:
     except ValueError as e:
         errors.append(str(e))
 
+    references = _cell(row, 'references') if include_references else ''
+    if references:
+        try:
+            for ref in _load_references(references):
+                if len(str(ref.get('key') or '')) > 128:
+                    errors.append(f"reference key '{ref['key']}' is longer than 128 characters")
+        except ValueError as e:
+            errors.append(str(e))
+
     return errors
 
 
-def validate_csv(df: pd.DataFrame) -> list:
+def validate_csv(df: pd.DataFrame, include_references: bool = False) -> list:
     """Check DataFrame for required columns and per-record data validity.
 
     Row numbers in messages match spreadsheet rows (header is row 1).
 
     Args:
         df: DataFrame to validate
+        include_references: Also require the references column to be parseable
 
     Returns:
         List of error messages, empty if valid
@@ -437,7 +447,7 @@ def validate_csv(df: pd.DataFrame) -> list:
         line = position + 2
         doi = _cell(row, 'doi')
         label = f"Row {line} ({doi})" if doi else f"Row {line}"
-        errors.extend(f"{label}: {message}" for message in _row_errors(row))
+        errors.extend(f"{label}: {message}" for message in _row_errors(row, include_references))
 
         if doi:
             key = doi.lower()  # DOIs are case-insensitive
@@ -680,6 +690,23 @@ def contributors_to_xml(authors_str: str) -> etree.Element:
 # Reference Parsing
 # =============================================================================
 
+def _load_references(references_str: str) -> list:
+    """Strictly parse a references cell into a list of dicts.
+
+    Raises:
+        ValueError: If the value is not a JSON (or Python literal) list of objects
+    """
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            references = loader(references_str)
+        except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+            continue
+        if isinstance(references, list) and all(isinstance(ref, dict) for ref in references):
+            return references
+    raise ValueError(f"references could not be parsed as a JSON array of objects: "
+                     f"{str(references_str)[:60]}")
+
+
 def parse_references(references_str: str) -> list:
     """Parse references from JSON or Python literal format.
 
@@ -689,25 +716,16 @@ def parse_references(references_str: str) -> list:
     Returns:
         List of reference dictionaries, or empty list if parsing fails
     """
-    if not references_str or pd.isna(references_str):
+    if references_str is None or (not isinstance(references_str, str) and pd.isna(references_str)):
+        return []
+    if not str(references_str).strip():
         return []
 
     try:
-        references = json.loads(references_str)
-        if isinstance(references, list):
-            return references
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    try:
-        references = ast.literal_eval(references_str)
-        if isinstance(references, list):
-            return references
-    except (ValueError, SyntaxError, TypeError):
-        pass
-
-    logger.warning(f"Failed to parse references: {str(references_str)[:100]}")
-    return []
+        return _load_references(references_str)
+    except ValueError:
+        logger.warning(f"Failed to parse references: {str(references_str)[:100]}")
+        return []
 
 
 def references_to_xml(references_str: str) -> etree.Element:
@@ -726,11 +744,12 @@ def references_to_xml(references_str: str) -> etree.Element:
 
     citation_list = etree.Element('citation_list')
 
-    for ref in references:
+    for position, ref in enumerate(references, start=1):
         if not isinstance(ref, dict):
             continue
 
-        key = ref.get('key', '')
+        # Crossref requires a non-empty key; number unkeyed references by position
+        key = str(ref.get('key') or f'ref{position}')
         citation = etree.SubElement(citation_list, 'citation', key=key)
 
         doi = ref.get('DOI')
@@ -914,7 +933,7 @@ def generate_xml(data: pd.DataFrame, depositor_name: str, depositor_email: str,
     if license_url and not _is_url(license_url):
         raise ValueError(f"license_url '{license_url}' is not an absolute http(s) URL")
 
-    errors = validate_csv(data)
+    errors = validate_csv(data, include_references=include_references)
     if errors:
         shown = errors[:MAX_REPORTED_ERRORS]
         message = '; '.join(shown)
